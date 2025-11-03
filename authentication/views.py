@@ -589,15 +589,14 @@ def google_login(request):
     )
     return HttpResponseRedirect(auth_url)
 
-
 @api_view(['GET'])
 def google_callback(request):
     code = request.GET.get('code')
     if not code:
-        return JsonResponse({'error': 'Authorization code missing'}, status=status.HTTP_400_BAD_REQUEST)
+        return JsonResponse({'error': 'Authorization code missing'}, status=400)
 
     try:
-        # 1. Get Access Token from Google
+        # 1. Get Access Token
         token_response = requests.post('https://oauth2.googleapis.com/token', data={
             'code': code,
             'client_id': os.getenv('GOOGLE_CLIENT_ID'),
@@ -607,52 +606,49 @@ def google_callback(request):
         }).json()
 
         if 'error' in token_response:
-            logger.error(f"Google token exchange failed: {token_response.get('error_description')}")
-            return JsonResponse({'error': 'Google token exchange failed'}, status=status.HTTP_400_BAD_REQUEST)
+            return JsonResponse({'error': 'Google token exchange failed'}, status=400)
 
-        # 2. Get User Info from Google
         access_token = token_response['access_token']
         user_info = requests.get(
             'https://www.googleapis.com/oauth2/v2/userinfo',
             headers={'Authorization': f'Bearer {access_token}'}
         ).json()
-        
+
         email = user_info.get('email')
         if not email:
-             return JsonResponse({'error': 'Google did not provide an email address.'}, status=status.HTTP_400_BAD_REQUEST)
+            return JsonResponse({'error': 'Email not provided by Google'}, status=400)
 
-        # 3. Find or Create User
-        user, created = User.objects.get_or_create(email=email)
-        if created:
-            user.full_name = user_info.get('name', '')
+        # 2. Find or Create User
+        user, created = User.objects.get_or_create(email=email, defaults={
+            'full_name': user_info.get('name', ''),
+            'is_email_verified': True,
+            'is_active': True,
+        })
+
+        # 3. যদি আগের ইউজার থাকে, তাকে active + verified করো
+        if not created:
             user.is_email_verified = True
             user.is_active = True
-            # Set an unusable password for social logins
-            user.set_unusable_password() 
+            user.full_name = user_info.get('name', user.full_name or '')
+            if not user.has_usable_password():
+                user.set_unusable_password()
             user.save()
-            logger.info(f"New user created via Google: {email}")
-            
-            # Create a Profile for the new user if your logic requires it
-            Profile.objects.create(user=user) 
-            
-        elif not user.is_active:
-             # Handle case where user is inactive (e.g., pending email verification from non-social sign-up)
-             user.is_active = True
-             user.is_email_verified = True
-             user.save()
+            logger.info(f"Existing user activated via Google: {email}")
 
-        # 4. Generate Standard Simple JWT Tokens (Access and Refresh)
+        # 4. Profile create if not exists
+        Profile.objects.get_or_create(user=user)
+
+        # 5. Generate JWT Tokens
         refresh = RefreshToken.for_user(user)
         refresh_token_str = str(refresh)
         access_token_str = str(refresh.access_token)
-        
-        # Calculate expiration times
-        refresh_expires_at = timezone.now() + refresh.lifetime
-        access_expires_at = timezone.now() + timedelta(minutes=15) # Default Simple JWT access token lifetime
 
-        # 5. Save Tokens to the Token Model (revoking old ones is often safer)
-        # You may want to revoke all old tokens for this user first:
-        # Token.objects.filter(user=user).update(revoked=True)
+        refresh_expires_at = timezone.now() + refresh.lifetime
+        access_expires_at = timezone.now() + timedelta(minutes=15)
+
+        # Revoke old tokens (optional but secure)
+        Token.objects.filter(user=user).update(revoked=True)
+
         Token.objects.create(
             user=user,
             email=user.email,
@@ -662,15 +658,14 @@ def google_callback(request):
             access_token_expires_at=access_expires_at
         )
 
-        logger.info(f"User logged in via Google: {user.email}")
-        
-        # 6. Return Tokens to Client
+        logger.info(f"Google login successful: {email}")
+
         return JsonResponse({
             'access_token': access_token_str,
-            'access_token_expires_in': int(timedelta(minutes=15).total_seconds()),
+            'access_token_expires_in': 900,
             'refresh_token': refresh_token_str,
             'refresh_token_expires_in': int(refresh.lifetime.total_seconds()),
-            'token_type': "Bearer",
+            'token_type': 'Bearer',
             'user': {
                 'id': user.id,
                 'email': user.email,
@@ -678,15 +673,11 @@ def google_callback(request):
                 'email_verified': user.is_email_verified,
                 'role': user.role
             }
-        }, status=status.HTTP_200_OK)
+        })
 
-    except requests.RequestException as e:
-        logger.error(f"HTTP request error during Google login: {e}")
-        return JsonResponse({'error': 'Network or API error during Google login.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     except Exception as e:
-        logger.error(f'Critical error during Google login: {str(e)}')
-        return JsonResponse({'error': f'Google login failed: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
+        logger.error(f"Google login error: {str(e)}")
+        return JsonResponse({'error': 'Login failed'}, status=500)
 
 # 🍎 APPLE LOGIN
 @api_view(['GET'])
