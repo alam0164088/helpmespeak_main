@@ -701,6 +701,7 @@ class AppleLoginView(APIView):
             f"scope=name%20email&"
             f"response_mode=form_post"
         )
+
         return Response({"auth_url": apple_auth_url}, status=status.HTTP_200_OK)
 
     def post(self, request):
@@ -785,6 +786,8 @@ class AppleLoginView(APIView):
         except Exception as e:
             logger.error(f"Apple login failed: {str(e)}")
             return Response({"error": f"Apple login failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+
 # authentication/views.py
 from django.shortcuts import redirect
 from rest_framework.views import APIView
