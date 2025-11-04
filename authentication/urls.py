@@ -50,6 +50,6 @@ urlpatterns = [
     path('auth/google/', GoogleLoginView.as_view(), name='google-login'),
     path('auth/google/callback/', GoogleCallbackView.as_view(), name='google-callback'),
     path('auth/apple/', AppleLoginView.as_view(), name='apple-login'),
-    path('accounts/apple/login/callback/', AppleCallbackView.as_view(), name='apple-callback'),
+    path('auth/apple/callback/', AppleCallbackView.as_view(), name='apple-callback'),
 
 ]
