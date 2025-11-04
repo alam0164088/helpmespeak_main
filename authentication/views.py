@@ -565,178 +565,269 @@ class MeView(APIView):
         return self.put(request)
     
 
-
-
 import os
 import requests
-from django.http import JsonResponse, HttpResponseRedirect
-from rest_framework.decorators import api_view
-from jose import jwt
-from dotenv import load_dotenv
+import jwt
+from datetime import timedelta
+from django.utils import timezone
+from django.conf import settings
+from django.contrib.auth import get_user_model
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from rest_framework.permissions import AllowAny
+from rest_framework_simplejwt.tokens import RefreshToken
+from .models import Token, Profile
+import logging
 
-load_dotenv()
+logger = logging.getLogger(__name__)
+User = get_user_model()
 
-# ✅ GOOGLE LOGIN
-@api_view(['GET'])
-def google_login(request):
-    auth_url = (
-        f"https://accounts.google.com/o/oauth2/v2/auth?"
-        f"client_id={os.getenv('GOOGLE_CLIENT_ID')}&"
-        f"redirect_uri={os.getenv('GOOGLE_REDIRECT_URI')}&"
-        f"scope=openid%20email%20profile&"
-        f"response_type=code&"
-        f"access_type=offline&prompt=consent"
-    )
-    return HttpResponseRedirect(auth_url)
 
-@api_view(['GET'])
-def google_callback(request):
-    code = request.GET.get('code')
-    if not code:
-        return JsonResponse({'error': 'Authorization code missing'}, status=400)
+# ✅ GOOGLE LOGIN VIEW
+class GoogleLoginView(APIView):
+    permission_classes = [AllowAny]
 
-    try:
-        # 1. Get Access Token
-        token_response = requests.post('https://oauth2.googleapis.com/token', data={
-            'code': code,
-            'client_id': os.getenv('GOOGLE_CLIENT_ID'),
-            'client_secret': os.getenv('GOOGLE_CLIENT_SECRET'),
-            'redirect_uri': os.getenv('GOOGLE_REDIRECT_URI'),
-            'grant_type': 'authorization_code'
-        }).json()
-
-        if 'error' in token_response:
-            return JsonResponse({'error': 'Google token exchange failed'}, status=400)
-
-        access_token = token_response['access_token']
-        user_info = requests.get(
-            'https://www.googleapis.com/oauth2/v2/userinfo',
-            headers={'Authorization': f'Bearer {access_token}'}
-        ).json()
-
-        email = user_info.get('email')
-        if not email:
-            return JsonResponse({'error': 'Email not provided by Google'}, status=400)
-
-        # 2. Find or Create User
-        user, created = User.objects.get_or_create(email=email, defaults={
-            'full_name': user_info.get('name', ''),
-            'is_email_verified': True,
-            'is_active': True,
-        })
-
-        # 3. যদি আগের ইউজার থাকে, তাকে active + verified করো
-        if not created:
-            user.is_email_verified = True
-            user.is_active = True
-            user.full_name = user_info.get('name', user.full_name or '')
-            if not user.has_usable_password():
-                user.set_unusable_password()
-            user.save()
-            logger.info(f"Existing user activated via Google: {email}")
-
-        # 4. Profile create if not exists
-        Profile.objects.get_or_create(user=user)
-
-        # 5. Generate JWT Tokens
-        refresh = RefreshToken.for_user(user)
-        refresh_token_str = str(refresh)
-        access_token_str = str(refresh.access_token)
-
-        refresh_expires_at = timezone.now() + refresh.lifetime
-        access_expires_at = timezone.now() + timedelta(minutes=15)
-
-        # Revoke old tokens (optional but secure)
-        Token.objects.filter(user=user).update(revoked=True)
-
-        Token.objects.create(
-            user=user,
-            email=user.email,
-            refresh_token=refresh_token_str,
-            access_token=access_token_str,
-            refresh_token_expires_at=refresh_expires_at,
-            access_token_expires_at=access_expires_at
+    def get(self, request):
+        """Redirect user to Google OAuth URL"""
+        google_auth_url = (
+            f"https://accounts.google.com/o/oauth2/v2/auth?"
+            f"client_id={os.getenv('GOOGLE_CLIENT_ID')}&"
+            f"redirect_uri={os.getenv('GOOGLE_REDIRECT_URI')}&"
+            f"scope=openid%20email%20profile&"
+            f"response_type=code&"
+            f"access_type=offline&prompt=consent"
         )
+        logger.info("Redirecting to Google OAuth URL")
+        return Response({"auth_url": google_auth_url}, status=status.HTTP_200_OK)
 
-        logger.info(f"Google login successful: {email}")
+    def post(self, request):
+        """Handle Google OAuth callback (after user grants access)"""
+        code = request.data.get('code')
+        if not code:
+            return Response({"error": "Authorization code missing"}, status=status.HTTP_400_BAD_REQUEST)
 
-        return JsonResponse({
-            'access_token': access_token_str,
-            'access_token_expires_in': 900,
-            'refresh_token': refresh_token_str,
-            'refresh_token_expires_in': int(refresh.lifetime.total_seconds()),
-            'token_type': 'Bearer',
-            'user': {
-                'id': user.id,
-                'email': user.email,
-                'full_name': user.full_name,
-                'email_verified': user.is_email_verified,
-                'role': user.role
-            }
-        })
+        try:
+            # 1️⃣ Exchange authorization code for tokens
+            token_response = requests.post('https://oauth2.googleapis.com/token', data={
+                'code': code,
+                'client_id': os.getenv('GOOGLE_CLIENT_ID'),
+                'client_secret': os.getenv('GOOGLE_CLIENT_SECRET'),
+                'redirect_uri': os.getenv('GOOGLE_REDIRECT_URI'),
+                'grant_type': 'authorization_code'
+            }).json()
 
-    except Exception as e:
-        logger.error(f"Google login error: {str(e)}")
-        return JsonResponse({'error': 'Login failed'}, status=500)
+            if 'error' in token_response:
+                logger.error(f"Google token exchange failed: {token_response.get('error_description')}")
+                return Response({"error": "Google token exchange failed"}, status=status.HTTP_400_BAD_REQUEST)
 
-# 🍎 APPLE LOGIN
-@api_view(['GET'])
-def apple_login(request):
-    auth_url = (
-        "https://appleid.apple.com/auth/authorize?"
-        f"client_id={os.getenv('APPLE_CLIENT_ID')}&"
-        f"redirect_uri={os.getenv('APPLE_REDIRECT_URI')}&"
-        f"response_type=code%20id_token&"
-        f"scope=name%20email&"
-        f"response_mode=form_post"
-    )
-    return HttpResponseRedirect(auth_url)
+            access_token = token_response['access_token']
+
+            # 2️⃣ Get user info from Google
+            user_info = requests.get(
+                'https://www.googleapis.com/oauth2/v2/userinfo',
+                headers={'Authorization': f'Bearer {access_token}'}
+            ).json()
+
+            email = user_info.get('email')
+            if not email:
+                return Response({"error": "Google did not provide an email address"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # 3️⃣ Create or update user
+            user, created = User.objects.get_or_create(email=email)
+            if created:
+                user.full_name = user_info.get('name', '')
+                user.is_email_verified = True
+                user.is_active = True
+                user.set_unusable_password()
+                user.save()
+                Profile.objects.create(user=user)
+                logger.info(f"New user created via Google: {email}")
+            else:
+                if not user.is_active:
+                    user.is_active = True
+                    user.is_email_verified = True
+                    user.save()
+
+            # 4️⃣ Generate JWT tokens
+            refresh = RefreshToken.for_user(user)
+            refresh_token_str = str(refresh)
+            access_token_str = str(refresh.access_token)
+            refresh_expires_at = timezone.now() + refresh.lifetime
+            access_expires_at = timezone.now() + timedelta(minutes=15)
+
+            Token.objects.create(
+                user=user,
+                email=user.email,
+                refresh_token=refresh_token_str,
+                access_token=access_token_str,
+                refresh_token_expires_at=refresh_expires_at,
+                access_token_expires_at=access_expires_at
+            )
+
+            # 5️⃣ Return response
+            logger.info(f"User logged in via Google: {user.email}")
+            return Response({
+                "access_token": access_token_str,
+                "access_token_expires_in": int(timedelta(minutes=15).total_seconds()),
+                "refresh_token": refresh_token_str,
+                "refresh_token_expires_in": int(refresh.lifetime.total_seconds()),
+                "token_type": "Bearer",
+                "user": {
+                    "id": user.id,
+                    "email": user.email,
+                    "full_name": user.full_name,
+                    "email_verified": user.is_email_verified,
+                    "role": user.role
+                }
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Google login failed: {str(e)}")
+            return Response({"error": f"Google login failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-@api_view(['POST'])
-def apple_callback(request):
-    code = request.POST.get('code')
-    id_token = request.POST.get('id_token')
+# ✅ APPLE LOGIN VIEW
+class AppleLoginView(APIView):
+    permission_classes = [AllowAny]
 
-    if not code and not id_token:
-        return JsonResponse({'error': 'Missing authorization data'}, status=400)
+    def get(self, request):
+        """Redirect to Apple OAuth authorization URL"""
+        apple_auth_url = (
+            "https://appleid.apple.com/auth/authorize?"
+            f"client_id={os.getenv('APPLE_CLIENT_ID')}&"
+            f"redirect_uri={os.getenv('APPLE_REDIRECT_URI')}&"
+            f"response_type=code%20id_token&"
+            f"scope=name%20email&"
+            f"response_mode=form_post"
+        )
+        return Response({"auth_url": apple_auth_url}, status=status.HTTP_200_OK)
 
-    try:
-        # Apple থেকে টোকেন নেওয়া
-        token_response = requests.post('https://appleid.apple.com/auth/token', data={
-            'grant_type': 'authorization_code',
+    def post(self, request):
+        """Handle Apple OAuth callback"""
+        code = request.data.get('code')
+        id_token = request.data.get('id_token')
+
+        if not code and not id_token:
+            return Response({"error": "Missing authorization data"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            token_response = requests.post('https://appleid.apple.com/auth/token', data={
+                'grant_type': 'authorization_code',
+                'code': code,
+                'client_id': os.getenv('APPLE_CLIENT_ID'),
+                'client_secret': os.getenv('APPLE_CLIENT_SECRET'),
+                'redirect_uri': os.getenv('APPLE_REDIRECT_URI'),
+            }, headers={'Content-Type': 'application/x-www-form-urlencoded'}).json()
+
+            if 'error' in token_response:
+                return Response({"error": token_response['error']}, status=status.HTTP_400_BAD_REQUEST)
+
+            id_token = token_response.get('id_token', id_token)
+            decoded = jwt.decode(id_token, options={"verify_signature": False})
+
+            email = decoded.get('email')
+            sub = decoded.get('sub')
+
+            if not email:
+                return Response({"error": "Apple login did not return an email"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Get or create user
+            user, created = User.objects.get_or_create(email=email)
+            if created:
+                user.username = email
+                user.full_name = decoded.get('name', email.split('@')[0])
+                user.is_email_verified = True
+                user.is_active = True
+                user.set_unusable_password()
+                user.save()
+                Profile.objects.create(user=user)
+                logger.info(f"New user created via Apple: {email}")
+            else:
+                if not user.is_active:
+                    user.is_active = True
+                    user.is_email_verified = True
+                    user.save()
+
+            # Generate JWT tokens
+            refresh = RefreshToken.for_user(user)
+            refresh_token_str = str(refresh)
+            access_token_str = str(refresh.access_token)
+
+            refresh_expires_at = timezone.now() + refresh.lifetime
+            access_expires_at = timezone.now() + timedelta(minutes=15)
+
+            Token.objects.create(
+                user=user,
+                email=user.email,
+                refresh_token=refresh_token_str,
+                access_token=access_token_str,
+                refresh_token_expires_at=refresh_expires_at,
+                access_token_expires_at=access_expires_at
+            )
+
+            logger.info(f"User logged in via Apple: {user.email}")
+            return Response({
+                "access_token": access_token_str,
+                "access_token_expires_in": int(timedelta(minutes=15).total_seconds()),
+                "refresh_token": refresh_token_str,
+                "refresh_token_expires_in": int(refresh.lifetime.total_seconds()),
+                "token_type": "Bearer",
+                "user": {
+                    "id": user.id,
+                    "email": user.email,
+                    "full_name": user.full_name,
+                    "email_verified": user.is_email_verified,
+                    "role": user.role
+                }
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Apple login failed: {str(e)}")
+            return Response({"error": f"Apple login failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+# authentication/views.py
+from django.shortcuts import redirect
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from django.conf import settings
+import requests
+import jwt
+
+class GoogleCallbackView(APIView):
+    def get(self, request):
+        code = request.GET.get('code')
+        if not code:
+            return Response({'error': 'No code provided'}, status=400)
+
+        # Exchange code for access token
+        token_url = 'https://oauth2.googleapis.com/token'
+        data = {
             'code': code,
-            'client_id': os.getenv('APPLE_CLIENT_ID'),
-            'client_secret': os.getenv('APPLE_CLIENT_SECRET'),
-            'redirect_uri': os.getenv('APPLE_REDIRECT_URI'),
-        }, headers={'Content-Type': 'application/x-www-form-urlencoded'}).json()
+            'client_id': settings.GOOGLE_CLIENT_ID,
+            'client_secret': settings.GOOGLE_CLIENT_SECRET,
+            'redirect_uri': settings.GOOGLE_REDIRECT_URI,
+            'grant_type': 'authorization_code'
+        }
+        r = requests.post(token_url, data=data)
+        token_data = r.json()
 
-        if 'error' in token_response:
-            return JsonResponse({'error': token_response['error']}, status=400)
+        access_token = token_data.get('access_token')
+        if not access_token:
+            return Response({'error': 'Failed to get access token'}, status=400)
 
-        id_token = token_response.get('id_token', id_token)
-        decoded = jwt.decode(id_token, options={"verify_signature": False})  # verify_signature=False শুধু ডেমো
+        # Get user info
+        user_info_url = 'https://www.googleapis.com/oauth2/v1/userinfo'
+        headers = {'Authorization': f'Bearer {access_token}'}
+        r = requests.get(user_info_url, headers=headers)
+        user_data = r.json()
 
-        user_email = decoded.get('email')
-        user_id = decoded.get('sub')
+        # Optionally, create user or return JWT
+        # Example JWT creation
+        jwt_payload = {
+            'email': user_data.get('email'),
+            'name': user_data.get('name')
+        }
+        jwt_token = jwt.encode(jwt_payload, settings.JWT_SECRET, algorithm='HS256')
 
-        app_token = jwt.encode({
-            'user_id': user_id,
-            'email': user_email,
-        }, settings.JWT_SECRET, algorithm='HS256')
-
-
-        return JsonResponse({
-            'success': True,
-            'provider': 'apple',
-            'token': app_token,
-            'user': {
-                'id': user_id,
-                'email': user_email,
-                'name': decoded.get('name'),
-            }
-        })
-    except Exception as e:
-        return JsonResponse({'error': f'Apple login failed: {str(e)}'}, status=500)
-
+        return Response({'token': jwt_token, 'user': user_data})
 
