@@ -211,12 +211,14 @@ GOOGLE_CLIENT_ID = env("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = env("GOOGLE_CLIENT_SECRET")
 GOOGLE_REDIRECT_URI = env("GOOGLE_REDIRECT_URI")
 
-APPLE_CLIENT_ID = env("APPLE_CLIENT_ID", default="your-apple-client-id")
-APPLE_CLIENT_SECRET = env("APPLE_CLIENT_SECRET", default="your-apple-client-secret")
-APPLE_KEY_ID = env("APPLE_KEY_ID", default="your-apple-key-id")
-APPLE_REDIRECT_URI = env("APPLE_REDIRECT_URI", default="https://example.com/apple/callback")
-APPLE_TEAM_ID = env("APPLE_TEAM_ID", default="your-apple-team-id")
-APPLE_PRIVATE_KEY = env("APPLE_PRIVATE_KEY", default="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----")
+
+APPLE_TEAM_ID = os.getenv("APPLE_TEAM_ID")
+APPLE_CLIENT_ID = os.getenv("APPLE_CLIENT_ID")
+APPLE_KEY_ID = os.getenv("APPLE_KEY_ID")
+APPLE_PRIVATE_KEY = os.getenv("APPLE_PRIVATE_KEY").replace("\\n", "\n")  # \n ঠিক করার জন্য
+APPLE_BUNDLE_ID = os.getenv("APPLE_BUNDLE_ID")
+APPLE_CALLBACK_URL = os.getenv("APPLE_CALLBACK_URL")
+
 
 SOCIALACCOUNT_PROVIDERS = {
     'google': {
@@ -230,8 +232,8 @@ SOCIALACCOUNT_PROVIDERS = {
     },
     'apple': {
         'APP': {
-            'client_id': APPLE_CLIENT_ID,
-            'secret': APPLE_CLIENT_SECRET,
+            'client_id': APPLE_CLIENT_ID,  # Service ID
+            'secret': None,                # এখানে APPLE_CLIENT_SECRET হবে না
             'key': APPLE_KEY_ID,
         },
         'SCOPE': ['name', 'email'],
