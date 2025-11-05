@@ -1,4 +1,4 @@
-helpmespeak/
+helpmespeak_main/
 ├── authentication
 │   ├── admin.py
 │   ├── apps.py
