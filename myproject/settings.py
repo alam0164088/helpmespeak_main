@@ -219,23 +219,19 @@ APPLE_PRIVATE_KEY = os.getenv("APPLE_PRIVATE_KEY").replace("\\n", "\n")  # \n �
 APPLE_BUNDLE_ID = os.getenv("APPLE_BUNDLE_ID")
 redirect_uri = os.getenv("APPLE_CALLBACK_URL")
 
-import jwt
-import time
+import jwt, time
 
 def generate_apple_client_secret():
-    headers = {
-        "kid": APPLE_KEY_ID,
-        "alg": "ES256"
-    }
+    headers = {"kid": APPLE_KEY_ID, "alg": "ES256"}
     payload = {
         "iss": APPLE_TEAM_ID,
         "iat": int(time.time()),
-        "exp": int(time.time()) + 86400*180,  # 6 মাস বৈধ
+        "exp": int(time.time()) + 86400*180,  # 6 মাস
         "aud": "https://appleid.apple.com",
         "sub": APPLE_CLIENT_ID,
     }
-    client_secret = jwt.encode(payload, APPLE_PRIVATE_KEY, algorithm="ES256", headers=headers)
-    return client_secret
+    return jwt.encode(payload, APPLE_PRIVATE_KEY, algorithm="ES256", headers=headers)
+
 
 
 
@@ -283,5 +279,3 @@ if APPLE_PRIVATE_KEY:
     APPLE_PRIVATE_KEY = APPLE_PRIVATE_KEY.replace("\\n", "\n")
 else:
     raise ValueError("APPLE_PRIVATE_KEY is not set!")
-
-# গফগফত্র
