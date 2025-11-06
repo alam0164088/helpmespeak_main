@@ -217,7 +217,26 @@ APPLE_CLIENT_ID = os.getenv("APPLE_CLIENT_ID")
 APPLE_KEY_ID = os.getenv("APPLE_KEY_ID")
 APPLE_PRIVATE_KEY = os.getenv("APPLE_PRIVATE_KEY").replace("\\n", "\n")  # \n ঠিক করার জন্য
 APPLE_BUNDLE_ID = os.getenv("APPLE_BUNDLE_ID")
-APPLE_CALLBACK_URL = os.getenv("APPLE_CALLBACK_URL")
+redirect_uri = os.getenv("APPLE_CALLBACK_URL")
+
+import jwt
+import time
+
+def generate_apple_client_secret():
+    headers = {
+        "kid": APPLE_KEY_ID,
+        "alg": "ES256"
+    }
+    payload = {
+        "iss": APPLE_TEAM_ID,
+        "iat": int(time.time()),
+        "exp": int(time.time()) + 86400*180,  # 6 মাস বৈধ
+        "aud": "https://appleid.apple.com",
+        "sub": APPLE_CLIENT_ID,
+    }
+    client_secret = jwt.encode(payload, APPLE_PRIVATE_KEY, algorithm="ES256", headers=headers)
+    return client_secret
+
 
 
 SOCIALACCOUNT_PROVIDERS = {
@@ -232,13 +251,19 @@ SOCIALACCOUNT_PROVIDERS = {
     },
     'apple': {
         'APP': {
-            'client_id': APPLE_CLIENT_ID,  # Service ID
-            'secret': None,                # এখানে APPLE_CLIENT_SECRET হবে না
+            'client_id': APPLE_CLIENT_ID,
+            'secret': generate_apple_client_secret(),
             'key': APPLE_KEY_ID,
         },
         'SCOPE': ['name', 'email'],
+        'AUTH_PARAMS': {
+            'response_type': 'code id_token',
+            'response_mode': 'form_post',
+            'redirect_uri': redirect_uri
+        }
     }
 }
+
 
 # ------------------------------
 # Apple IAP & Google Service Account
