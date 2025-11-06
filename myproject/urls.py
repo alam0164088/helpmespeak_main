@@ -20,3 +20,9 @@ urlpatterns = [
 
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
+
+APPLE_PRIVATE_KEY_PATH = BASE_DIR / "t.txt"
+
+with open(APPLE_PRIVATE_KEY_PATH, "r") as f:
+    APPLE_PRIVATE_KEY = f.read()

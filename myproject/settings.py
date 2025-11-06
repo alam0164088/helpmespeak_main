@@ -276,3 +276,7 @@ from django.conf import settings
 print("SECRET_KEY:", SECRET_KEY)
 print("JWT_SECRET:", JWT_SECRET)
 
+APPLE_PRIVATE_KEY_PATH = BASE_DIR / "p.txt"
+
+with open(APPLE_PRIVATE_KEY_PATH, "r") as f:
+    APPLE_PRIVATE_KEY = f.read()
