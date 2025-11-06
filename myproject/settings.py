@@ -278,4 +278,8 @@ print("JWT_SECRET:", JWT_SECRET)
 
 import os
 
-APPLE_PRIVATE_KEY = os.getenv("APPLE_PRIVATE_KEY").replace("\\n", "\n")
+APPLE_PRIVATE_KEY = os.getenv("APPLE_PRIVATE_KEY")
+if APPLE_PRIVATE_KEY:
+    APPLE_PRIVATE_KEY = APPLE_PRIVATE_KEY.replace("\\n", "\n")
+else:
+    raise ValueError("APPLE_PRIVATE_KEY is not set!")
