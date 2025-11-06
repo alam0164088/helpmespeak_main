@@ -276,7 +276,6 @@ from django.conf import settings
 print("SECRET_KEY:", SECRET_KEY)
 print("JWT_SECRET:", JWT_SECRET)
 
-APPLE_PRIVATE_KEY_PATH = BASE_DIR / "p.txt"
+import os
 
-with open(APPLE_PRIVATE_KEY_PATH, "r") as f:
-    APPLE_PRIVATE_KEY = f.read()
+APPLE_PRIVATE_KEY = os.getenv("APPLE_PRIVATE_KEY").replace("\\n", "\n")
