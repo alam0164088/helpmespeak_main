@@ -788,6 +788,17 @@ class AppleLoginView(APIView):
             return Response({"error": f"Apple login failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
 
+from django.views import View
+from django.http import JsonResponse
+
+class AppleCallbackView(View):
+    def get(self, request, *args, **kwargs):
+        # এখানে তোমার Apple callback logic রাখো
+        return JsonResponse({"message": "Apple callback received"})
+
+
+
+
 # authentication/views.py
 from django.shortcuts import redirect
 from rest_framework.views import APIView
