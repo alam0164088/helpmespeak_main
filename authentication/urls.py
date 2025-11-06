@@ -53,3 +53,4 @@ urlpatterns = [
     path('auth/apple/callback/', AppleCallbackView.as_view(), name='apple-callback'),
 
 ]
+# দফ
