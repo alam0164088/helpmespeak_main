@@ -212,12 +212,11 @@ GOOGLE_CLIENT_SECRET = env("GOOGLE_CLIENT_SECRET")
 GOOGLE_REDIRECT_URI = env("GOOGLE_REDIRECT_URI")
 
 
-APPLE_TEAM_ID = os.getenv("APPLE_TEAM_ID")
-APPLE_CLIENT_ID = os.getenv("APPLE_CLIENT_ID")
-APPLE_KEY_ID = os.getenv("APPLE_KEY_ID")
-# APPLE_PRIVATE_KEY = os.getenv("APPLE_PRIVATE_KEY").replace("\\n", "\n")  # \n ঠিক করার জন্য
-APPLE_BUNDLE_ID = os.getenv("APPLE_BUNDLE_ID")
-redirect_uri = os.getenv("APPLE_CALLBACK_URL")
+APPLE_TEAM_ID = env("APPLE_TEAM_ID")
+APPLE_CLIENT_ID = env("APPLE_CLIENT_ID")
+APPLE_KEY_ID = env("APPLE_KEY_ID")
+APPLE_BUNDLE_ID = env("APPLE_BUNDLE_ID")
+redirect_uri = env("APPLE_CALLBACK_URL")
 # ------------------------------
 # Apple Private Key লোড করুন প্রথমে
 # ------------------------------
@@ -226,6 +225,8 @@ APPLE_PRIVATE_KEY_PATH = BASE_DIR / "p.txt"
 if APPLE_PRIVATE_KEY_PATH.exists():
     APPLE_PRIVATE_KEY = APPLE_PRIVATE_KEY_PATH.read_text()
     APPLE_PRIVATE_KEY = APPLE_PRIVATE_KEY.replace("\\n", "\n").strip()
+    print("✅ APPLE_PRIVATE_KEY loaded successfully!")
+    print("First 50 chars:", APPLE_PRIVATE_KEY[:50]) 
 else:
     raise FileNotFoundError(f"Apple private key not found at {APPLE_PRIVATE_KEY_PATH}")
 
