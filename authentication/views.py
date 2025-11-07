@@ -695,8 +695,8 @@ class AppleLoginView(APIView):
         """Redirect to Apple OAuth authorization URL"""
         apple_auth_url = (
             "https://appleid.apple.com/auth/authorize?"
-            f"client_id={os.getenv('APPLE_CLIENT_ID')}&"
-            f"redirect_uri={os.getenv('APPLE_REDIRECT_URI')}&"
+            f"client_id={settings.APPLE_CLIENT_ID}&"
+            f"redirect_uri={settings.APPLE_CALLBACK_URL}&"  # settings থেকে নাও
             f"response_type=code%20id_token&"
             f"scope=name%20email&"
             f"response_mode=form_post"
