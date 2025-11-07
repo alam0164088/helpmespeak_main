@@ -819,7 +819,12 @@ class AppleLoginView(APIView):
                 {"error": "Apple login failed"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+        
+        # authentication/views.py
 
+
+
+# DEBUG CALLBACK (Optional)
 # DEBUG CALLBACK (Optional)
 class AppleCallbackView(APIView):
     def post(self, request):
