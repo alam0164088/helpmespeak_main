@@ -7,9 +7,12 @@ from django.core.mail import send_mail
 from django.conf import settings
 from django.utils import timezone
 from django.contrib.auth import get_user_model
+from django.views.decorators.cache import never_cache
+from django.utils.decorators import method_decorator
 import jwt
-from datetime import timedelta
+import requests
 import logging
+from datetime import timedelta
 from uuid import uuid4
 
 from .models import Token, Profile, PasswordResetSession
@@ -25,9 +28,12 @@ from .serializers import (
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
-# Existing views (unchanged)
+
+# =======================
+# USER AUTHENTICATION VIEWS
+# =======================
+
 class RegisterView(APIView):
-    """Handle user registration with optional email verification OTP."""
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -44,7 +50,7 @@ class RegisterView(APIView):
                     [user.email],
                     fail_silently=False,
                 )
-                user.is_active = False  # Inactive until verified
+                user.is_active = False
                 user.save()
                 logger.info(f"User registered: {user.email} (verification pending)")
                 return Response({
@@ -65,8 +71,9 @@ class RegisterView(APIView):
                     "message": "User created successfully."
                 }, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
 class InitialAdminSignUpView(APIView):
-    """Handle initial admin signup (only one admin allowed initially)."""
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -90,23 +97,16 @@ class InitialAdminSignUpView(APIView):
                 fail_silently=False,
             )
 
-            # -------------------------
-            # Token generation
-            # -------------------------
             refresh = RefreshToken.for_user(user)
             refresh_token = str(refresh)
             access_token = str(refresh.access_token)
-
-            # Use refresh.lifetime and access_token.lifetime instead of decoding manually
-            refresh_expires_at = timezone.now() + refresh.lifetime
-            access_expires_at = timezone.now() + access_token.lifetime if hasattr(access_token, 'lifetime') else timezone.now() + timedelta(minutes=15)
 
             Token.objects.create(
                 user=user,
                 email=user.email,
                 refresh_token=refresh_token,
                 access_token=access_token,
-                refresh_token_expires_at=refresh_expires_at,
+                refresh_token_expires_at=timezone.now() + refresh.lifetime,
                 access_token_expires_at=timezone.now() + timedelta(minutes=15)
             )
 
@@ -122,7 +122,6 @@ class InitialAdminSignUpView(APIView):
 
 
 class AdminSignUpView(APIView):
-    """Handle admin signup by an existing admin."""
     permission_classes = [IsAuthenticated, IsAdmin]
 
     def post(self, request):
@@ -148,8 +147,8 @@ class AdminSignUpView(APIView):
             }, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+
 class AdminUserManagementView(APIView):
-    """Manage users (view, update role, delete) by admins."""
     permission_classes = [IsAuthenticated, IsAdmin]
 
     def get(self, request, user_id=None):
@@ -191,8 +190,8 @@ class AdminUserManagementView(APIView):
         except User.DoesNotExist:
             return Response({"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND)
 
+
 class SendOTPView(APIView):
-    """Send OTP for email verification, password reset, or 2FA and save to Token model."""
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -225,13 +224,13 @@ class SendOTPView(APIView):
                     [user.email],
                     fail_silently=False,
                 )
-                logger.info(f"OTP {code} sent for {purpose} to: {user.email} and saved to Token model")
+                logger.info(f"OTP {code} sent for {purpose} to: {user.email}")
                 return Response({"message": f"OTP sent to email. Expires in {'5 minutes' if purpose != 'password_reset' else '15 minutes'}."}, status=status.HTTP_200_OK)
             
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
+
+
 class VerifyOTPView(APIView):
-    """Verify OTP for email verification or password reset."""
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -243,7 +242,6 @@ class VerifyOTPView(APIView):
             if not user:
                 return Response({"detail": "Invalid OTP or email."}, status=status.HTTP_400_BAD_REQUEST)
 
-            # OTP যদি email verification এর জন্য হয়
             if user.email_verification_code == otp and user.email_verification_code_expires_at >= timezone.now():
                 user.is_email_verified = True
                 user.is_active = True
@@ -253,7 +251,6 @@ class VerifyOTPView(APIView):
                 logger.info(f"Email verified for: {user.email}")
                 return Response({"message": "Email verified successfully."}, status=status.HTTP_200_OK)
 
-            # OTP যদি password reset এর জন্য হয়
             elif user.password_reset_code == otp and user.password_reset_code_expires_at >= timezone.now():
                 reset_token = str(uuid4())
                 PasswordResetSession.objects.create(user=user, token=reset_token)
@@ -269,6 +266,7 @@ class VerifyOTPView(APIView):
             else:
                 return Response({"detail": "OTP expired or invalid."}, status=status.HTTP_400_BAD_REQUEST)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
 class LoginView(APIView):
     permission_classes = [AllowAny]
@@ -300,8 +298,9 @@ class LoginView(APIView):
                 refresh.set_exp(lifetime=lifetime)
                 refresh_token_str = str(refresh)
                 access_token_str = str(refresh.access_token)
-                access_expires_in = 900  # 15 minutes
-                refresh_expires_in = int(refresh.lifetime.total_seconds())  # Use refresh.lifetime
+                access_expires_in = 900
+                refresh_expires_in = int(refresh.lifetime.total_seconds())
+
                 Token.objects.create(
                     user=user,
                     email=user.email,
@@ -327,10 +326,9 @@ class LoginView(APIView):
                 }, status=status.HTTP_200_OK)
             return Response({"detail": "Invalid credentials."}, status=status.HTTP_401_UNAUTHORIZED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
-    
+
+
 class RefreshTokenView(APIView):
-    """Refresh access token using a valid refresh token."""
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -344,22 +342,21 @@ class RefreshTokenView(APIView):
                 if not token_obj or token_obj.refresh_token_expires_at < timezone.now():
                     return Response({"detail": "Refresh token invalid or expired."}, status=status.HTTP_401_UNAUTHORIZED)
                 new_access = refresh.access_token
-                access_expires_in = 900
                 token_obj.access_token = str(new_access)
                 token_obj.access_token_expires_at = timezone.now() + timedelta(minutes=15)
                 token_obj.save()
                 logger.info(f"Token refreshed for: {user.email}")
                 return Response({
                     "access_token": str(new_access),
-                    "access_token_expires_in": access_expires_in
+                    "access_token_expires_in": 900
                 }, status=status.HTTP_200_OK)
             except Exception as e:
                 logger.error(f"Token refresh failed: {str(e)}")
                 return Response({"detail": "Refresh token invalid or expired."}, status=status.HTTP_401_UNAUTHORIZED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+
 class LogoutView(APIView):
-    """Handle user logout by revoking refresh tokens."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -371,8 +368,8 @@ class LogoutView(APIView):
         logger.info(f"User logged out: {request.user.email}")
         return Response({"message": "Logged out. Refresh token revoked."}, status=status.HTTP_200_OK)
 
+
 class ForgotPasswordView(APIView):
-    """Initiate password reset by sending an OTP."""
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -395,8 +392,8 @@ class ForgotPasswordView(APIView):
             }, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+
 class VerifyResetOTPView(APIView):
-    """Verify OTP for password reset."""
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -419,8 +416,8 @@ class VerifyResetOTPView(APIView):
             }, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+
 class ResetPasswordConfirmView(APIView):
-    """Confirm password reset with a new password."""
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -440,8 +437,8 @@ class ResetPasswordConfirmView(APIView):
             return Response({"message": "Password reset successfully. Please login with new password."}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+
 class ChangePasswordView(APIView):
-    """Change password for authenticated users."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -456,14 +453,13 @@ class ChangePasswordView(APIView):
             return Response({"message": "Password changed successfully. All existing refresh tokens revoked."}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+
 class Enable2FAView(APIView):
-    """Initiate 2FA enablement for authenticated users."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
         serializer = Enable2FASerializer(data=request.data)
         if serializer.is_valid():
-            method = serializer.validated_data['method']
             code = request.user.generate_email_verification_code()
             send_mail(
                 'Enable 2FA',
@@ -479,15 +475,14 @@ class Enable2FAView(APIView):
             }, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+
 class Verify2FAView(APIView):
-    """Verify 2FA OTP to enable 2FA."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
         serializer = Verify2FASerializer(data=request.data)
         if serializer.is_valid():
             otp = serializer.validated_data['otp']
-            method = serializer.validated_data['method']
             if request.user.email_verification_code != otp or request.user.email_verification_code_expires_at < timezone.now():
                 return Response({"detail": "OTP expired or invalid."}, status=status.HTTP_400_BAD_REQUEST)
             request.user.is_2fa_enabled = True
@@ -498,8 +493,8 @@ class Verify2FAView(APIView):
             return Response({"message": "2FA enabled successfully."}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+
 class ResendOTPView(APIView):
-    """Resend verification OTP for email verification."""
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -522,34 +517,18 @@ class ResendOTPView(APIView):
             logger.info(f"OTP resent for: {user.email}")
             return Response({"message": "Verification OTP resent. Expires in 5 minutes."}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
-from rest_framework import status
-from django.views.decorators.cache import never_cache
-from django.utils.decorators import method_decorator
-import logging
-from .models import Profile
-from .serializers import UserProfileSerializer, ProfileUpdateSerializer
-from . import views
 
-
-
-logger = logging.getLogger(__name__)
 
 class MeView(APIView):
     permission_classes = [IsAuthenticated]
 
     @method_decorator(never_cache)
     def get(self, request):
-        logger.debug(f"GET request for user: {request.user.email}")
         serializer = UserProfileSerializer(request.user, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def put(self, request):
         profile, created = Profile.objects.get_or_create(user=request.user)
-        logger.debug(f"PUT request for user: {request.user.email}, data: {request.data}")
         serializer = ProfileUpdateSerializer(profile, data=request.data, context={'request': request}, partial=True)
         if serializer.is_valid():
             serializer.save()
@@ -558,72 +537,51 @@ class MeView(APIView):
                 "message": "Profile updated successfully.",
                 "user": UserProfileSerializer(request.user, context={'request': request}).data
             }, status=status.HTTP_200_OK)
-        logger.error(f"Profile update failed for user: {request.user.email}, errors: {serializer.errors}")
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def patch(self, request):
         return self.put(request)
-    
-
-import os
-import requests
-import jwt
-from datetime import timedelta
-from django.utils import timezone
-from django.conf import settings
-from django.contrib.auth import get_user_model
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
-from rest_framework.permissions import AllowAny
-from rest_framework_simplejwt.tokens import RefreshToken
-from .models import Token, Profile
-import logging
-
-logger = logging.getLogger(__name__)
-User = get_user_model()
 
 
-# ✅ GOOGLE LOGIN VIEW
+# =======================
+# SOCIAL LOGIN VIEWS
+# =======================
+
+# GOOGLE LOGIN VIEW
 class GoogleLoginView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        """Redirect user to Google OAuth URL"""
+        if not settings.GOOGLE_REDIRECT_URI:
+            return Response({"error": "Google OAuth not configured"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         google_auth_url = (
             f"https://accounts.google.com/o/oauth2/v2/auth?"
-            f"client_id={os.getenv('GOOGLE_CLIENT_ID')}&"
-            f"redirect_uri={os.getenv('GOOGLE_REDIRECT_URI')}&"
+            f"client_id={settings.GOOGLE_CLIENT_ID}&"
+            f"redirect_uri={settings.GOOGLE_REDIRECT_URI}&"
             f"scope=openid%20email%20profile&"
             f"response_type=code&"
             f"access_type=offline&prompt=consent"
         )
-        logger.info("Redirecting to Google OAuth URL")
         return Response({"auth_url": google_auth_url}, status=status.HTTP_200_OK)
 
     def post(self, request):
-        """Handle Google OAuth callback (after user grants access)"""
         code = request.data.get('code')
         if not code:
             return Response({"error": "Authorization code missing"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            # 1️⃣ Exchange authorization code for tokens
             token_response = requests.post('https://oauth2.googleapis.com/token', data={
                 'code': code,
-                'client_id': os.getenv('GOOGLE_CLIENT_ID'),
-                'client_secret': os.getenv('GOOGLE_CLIENT_SECRET'),
-                'redirect_uri': os.getenv('GOOGLE_REDIRECT_URI'),
+                'client_id': settings.GOOGLE_CLIENT_ID,
+                'client_secret': settings.GOOGLE_CLIENT_SECRET,
+                'redirect_uri': settings.GOOGLE_REDIRECT_URI,
                 'grant_type': 'authorization_code'
             }).json()
 
             if 'error' in token_response:
-                logger.error(f"Google token exchange failed: {token_response.get('error_description')}")
-                return Response({"error": "Google token exchange failed"}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({"error": token_response.get('error_description')}, status=status.HTTP_400_BAD_REQUEST)
 
             access_token = token_response['access_token']
-
-            # 2️⃣ Get user info from Google
             user_info = requests.get(
                 'https://www.googleapis.com/oauth2/v2/userinfo',
                 headers={'Authorization': f'Bearer {access_token}'}
@@ -631,46 +589,38 @@ class GoogleLoginView(APIView):
 
             email = user_info.get('email')
             if not email:
-                return Response({"error": "Google did not provide an email address"}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({"error": "Google did not provide an email"}, status=status.HTTP_400_BAD_REQUEST)
 
-            # 3️⃣ Create or update user
-            user, created = User.objects.get_or_create(email=email)
+            user, created = User.objects.get_or_create(email=email, defaults={
+                'full_name': user_info.get('name', ''),
+                'is_email_verified': True,
+                'is_active': True,
+            })
             if created:
-                user.full_name = user_info.get('name', '')
-                user.is_email_verified = True
-                user.is_active = True
                 user.set_unusable_password()
                 user.save()
                 Profile.objects.create(user=user)
-                logger.info(f"New user created via Google: {email}")
+                logger.info(f"New Google user: {email}")
             else:
-                if not user.is_active:
-                    user.is_active = True
-                    user.is_email_verified = True
-                    user.save()
+                user.is_active = True
+                user.is_email_verified = True
+                user.save()
 
-            # 4️⃣ Generate JWT tokens
             refresh = RefreshToken.for_user(user)
-            refresh_token_str = str(refresh)
-            access_token_str = str(refresh.access_token)
-            refresh_expires_at = timezone.now() + refresh.lifetime
-            access_expires_at = timezone.now() + timedelta(minutes=15)
-
             Token.objects.create(
                 user=user,
                 email=user.email,
-                refresh_token=refresh_token_str,
-                access_token=access_token_str,
-                refresh_token_expires_at=refresh_expires_at,
-                access_token_expires_at=access_expires_at
+                refresh_token=str(refresh),
+                access_token=str(refresh.access_token),
+                refresh_token_expires_at=timezone.now() + refresh.lifetime,
+                access_token_expires_at=timezone.now() + timedelta(minutes=15)
             )
 
-            # 5️⃣ Return response
-            logger.info(f"User logged in via Google: {user.email}")
+            logger.info(f"Google login success: {user.email}")
             return Response({
-                "access_token": access_token_str,
-                "access_token_expires_in": int(timedelta(minutes=15).total_seconds()),
-                "refresh_token": refresh_token_str,
+                "access_token": str(refresh.access_token),
+                "access_token_expires_in": 900,
+                "refresh_token": str(refresh),
                 "refresh_token_expires_in": int(refresh.lifetime.total_seconds()),
                 "token_type": "Bearer",
                 "user": {
@@ -683,95 +633,90 @@ class GoogleLoginView(APIView):
             }, status=status.HTTP_200_OK)
 
         except Exception as e:
-            logger.error(f"Google login failed: {str(e)}")
-            return Response({"error": f"Google login failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.error(f"Google login failed: {e}")
+            return Response({"error": "Google login failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-# ✅ APPLE LOGIN VIEW
+# APPLE LOGIN VIEW
 class AppleLoginView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        """Redirect to Apple OAuth authorization URL"""
+        if not settings.APPLE_CALLBACK_URL:
+            return Response({"error": "Apple OAuth not configured"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         apple_auth_url = (
             "https://appleid.apple.com/auth/authorize?"
             f"client_id={settings.APPLE_CLIENT_ID}&"
-            f"redirect_uri={settings.APPLE_CALLBACK_URL}&"  # settings থেকে নাও
-            f"response_type=code%20id_token&"
-            f"scope=name%20email&"
+            f"redirect_uri={settings.APPLE_CALLBACK_URL}&"
+            f"response_type=code id_token&"
+            f"scope=name email&"
             f"response_mode=form_post"
         )
-
         return Response({"auth_url": apple_auth_url}, status=status.HTTP_200_OK)
 
     def post(self, request):
-        """Handle Apple OAuth callback"""
         code = request.data.get('code')
-        id_token = request.data.get('id_token')
-
-        if not code and not id_token:
-            return Response({"error": "Missing authorization data"}, status=status.HTTP_400_BAD_REQUEST)
+        if not code:
+            return Response({"error": "Missing authorization code"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            token_response = requests.post('https://appleid.apple.com/auth/token', data={
-                'grant_type': 'authorization_code',
-                'code': code,
-                'client_id': os.getenv('APPLE_CLIENT_ID'),
-                'client_secret': os.getenv('APPLE_CLIENT_SECRET'),
-                'redirect_uri': os.getenv('APPLE_REDIRECT_URI'),
-            }, headers={'Content-Type': 'application/x-www-form-urlencoded'}).json()
+            client_secret = generate_apple_client_secret()
+
+            token_response = requests.post(
+                'https://appleid.apple.com/auth/token',
+                data={
+                    'grant_type': 'authorization_code',
+                    'code': code,
+                    'client_id': settings.APPLE_CLIENT_ID,
+                    'client_secret': client_secret,
+                    'redirect_uri': settings.APPLE_CALLBACK_URL,
+                },
+                headers={'Content-Type': 'application/x-www-form-urlencoded'}
+            ).json()
 
             if 'error' in token_response:
-                return Response({"error": token_response['error']}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({"error": token_response.get('error_description', 'Token exchange failed')}, status=status.HTTP_400_BAD_REQUEST)
 
-            id_token = token_response.get('id_token', id_token)
+            id_token = token_response.get('id_token')
+            if not id_token:
+                return Response({"error": "No id_token from Apple"}, status=status.HTTP_400_BAD_REQUEST)
+
             decoded = jwt.decode(id_token, options={"verify_signature": False})
-
             email = decoded.get('email')
-            sub = decoded.get('sub')
-
             if not email:
-                return Response({"error": "Apple login did not return an email"}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({"error": "Apple did not return an email"}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Get or create user
-            user, created = User.objects.get_or_create(email=email)
+            user, created = User.objects.get_or_create(email=email, defaults={
+                'username': email,
+                'full_name': request.data.get('user', {}).get('name', email.split('@')[0]),
+                'is_email_verified': True,
+                'is_active': True,
+            })
             if created:
-                user.username = email
-                user.full_name = decoded.get('name', email.split('@')[0])
-                user.is_email_verified = True
-                user.is_active = True
                 user.set_unusable_password()
                 user.save()
                 Profile.objects.create(user=user)
-                logger.info(f"New user created via Apple: {email}")
+                logger.info(f"New Apple user: {email}")
             else:
-                if not user.is_active:
-                    user.is_active = True
-                    user.is_email_verified = True
-                    user.save()
+                user.is_active = True
+                user.is_email_verified = True
+                user.save()
 
-            # Generate JWT tokens
             refresh = RefreshToken.for_user(user)
-            refresh_token_str = str(refresh)
-            access_token_str = str(refresh.access_token)
-
-            refresh_expires_at = timezone.now() + refresh.lifetime
-            access_expires_at = timezone.now() + timedelta(minutes=15)
-
             Token.objects.create(
                 user=user,
                 email=user.email,
-                refresh_token=refresh_token_str,
-                access_token=access_token_str,
-                refresh_token_expires_at=refresh_expires_at,
-                access_token_expires_at=access_expires_at
+                refresh_token=str(refresh),
+                access_token=str(refresh.access_token),
+                refresh_token_expires_at=timezone.now() + refresh.lifetime,
+                access_token_expires_at=timezone.now() + timedelta(minutes=15)
             )
 
-            logger.info(f"User logged in via Apple: {user.email}")
+            logger.info(f"Apple login success: {user.email}")
             return Response({
-                "access_token": access_token_str,
-                "access_token_expires_in": int(timedelta(minutes=15).total_seconds()),
-                "refresh_token": refresh_token_str,
+                "access_token": str(refresh.access_token),
+                "access_token_expires_in": 900,
+                "refresh_token": str(refresh),
                 "refresh_token_expires_in": int(refresh.lifetime.total_seconds()),
                 "token_type": "Bearer",
                 "user": {
@@ -784,64 +729,16 @@ class AppleLoginView(APIView):
             }, status=status.HTTP_200_OK)
 
         except Exception as e:
-            logger.error(f"Apple login failed: {str(e)}")
-            return Response({"error": f"Apple login failed: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
+            logger.error(f"Apple login failed: {e}")
+            return Response({"error": "Apple login failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-from rest_framework.views import APIView
-from rest_framework.response import Response
 
+# DEBUG CALLBACK (Optional)
 class AppleCallbackView(APIView):
     def post(self, request):
-        code = request.data.get("code")
-        id_token = request.data.get("id_token")
-        return Response({"code": code, "id_token": id_token})
-
-
-
-# authentication/views.py
-from django.shortcuts import redirect
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from django.conf import settings
-import requests
-import jwt
-
-class GoogleCallbackView(APIView):
-    def get(self, request):
-        code = request.GET.get('code')
-        if not code:
-            return Response({'error': 'No code provided'}, status=400)
-
-        # Exchange code for access token
-        token_url = 'https://oauth2.googleapis.com/token'
-        data = {
-            'code': code,
-            'client_id': settings.GOOGLE_CLIENT_ID,
-            'client_secret': settings.GOOGLE_CLIENT_SECRET,
-            'redirect_uri': settings.GOOGLE_REDIRECT_URI,
-            'grant_type': 'authorization_code'
-        }
-        r = requests.post(token_url, data=data)
-        token_data = r.json()
-
-        access_token = token_data.get('access_token')
-        if not access_token:
-            return Response({'error': 'Failed to get access token'}, status=400)
-
-        # Get user info
-        user_info_url = 'https://www.googleapis.com/oauth2/v1/userinfo'
-        headers = {'Authorization': f'Bearer {access_token}'}
-        r = requests.get(user_info_url, headers=headers)
-        user_data = r.json()
-
-        # Optionally, create user or return JWT
-        # Example JWT creation
-        jwt_payload = {
-            'email': user_data.get('email'),
-            'name': user_data.get('name')
-        }
-        jwt_token = jwt.encode(jwt_payload, settings.JWT_SECRET, algorithm='HS256')
-
-        return Response({'token': jwt_token, 'user': user_data})
-
+        return Response({
+            "code": request.data.get("code"),
+            "id_token": request.data.get("id_token"),
+            "user": request.data.get("user"),
+            "state": request.data.get("state")
+        })
