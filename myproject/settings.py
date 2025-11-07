@@ -3,7 +3,6 @@ from pathlib import Path
 from datetime import timedelta
 import environ
 import dj_database_url
-import jwt
 
 # ------------------------------
 # Base directory
@@ -76,7 +75,7 @@ MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
-    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -204,32 +203,15 @@ GOOGLE_CLIENT_ID = env("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = env("GOOGLE_CLIENT_SECRET")
 GOOGLE_REDIRECT_URI = env("GOOGLE_REDIRECT_URI")
 
+# ------------------------------
+# Apple OAuth Settings
+# ------------------------------
 APPLE_BUNDLE_ID = env("APPLE_BUNDLE_ID")
 APPLE_TEAM_ID = env("APPLE_TEAM_ID")
 APPLE_KEY_ID = env("APPLE_KEY_ID")
 APPLE_CLIENT_ID = env("APPLE_CLIENT_ID")
 APPLE_CALLBACK_URL = env("APPLE_CALLBACK_URL")
-APPLE_PRIVATE_KEY = env("APPLE_PRIVATE_KEY")
-
-if APPLE_PRIVATE_KEY:
-    APPLE_PRIVATE_KEY = APPLE_PRIVATE_KEY.replace("\\n", "\n")
-
-# ------------------------------
-# Apple Client Secret Generator
-# ------------------------------
-def generate_apple_client_secret():
-    from django.conf import settings
-    from datetime import datetime, timedelta
-
-    headers = {"alg": "ES256", "kid": settings.APPLE_KEY_ID}
-    payload = {
-        "iss": settings.APPLE_TEAM_ID,
-        "iat": datetime.utcnow(),
-        "exp": datetime.utcnow() + timedelta(days=180),
-        "aud": "https://appleid.apple.com",
-        "sub": settings.APPLE_CLIENT_ID
-    }
-    return jwt.encode(payload, settings.APPLE_PRIVATE_KEY, algorithm="ES256", headers=headers)
+APPLE_PRIVATE_KEY = env("APPLE_PRIVATE_KEY").replace("\\n", "\n") if env("APPLE_PRIVATE_KEY") else ""
 
 # ------------------------------
 # SOCIALACCOUNT_PROVIDERS
@@ -238,15 +220,11 @@ SOCIALACCOUNT_PROVIDERS = {
     'apple': {
         'APP': {
             'client_id': APPLE_CLIENT_ID,
-            'secret': generate_apple_client_secret(),
+            'secret': '',  # ← views.py থেকে generate হবে
             'key': APPLE_KEY_ID,
         },
         'SCOPE': ['name', 'email'],
-        'AUTH_PARAMS': {
-            'response_type': 'code id_token',
-            'response_mode': 'form_post',
-            'redirect_uri': APPLE_CALLBACK_URL
-        }
+        'AUTH_PARAMS': {'response_mode': 'form_post'}
     },
     'google': {
         'SCOPE': ['profile', 'email'],
@@ -262,8 +240,9 @@ GOOGLE_PACKAGE_NAME = env("GOOGLE_PACKAGE_NAME", default="")
 GOOGLE_SERVICE_ACCOUNT_FILE = env("GOOGLE_SERVICE_ACCOUNT_FILE", default="")
 
 # ------------------------------
-# Debug
+# Debug (শুধু ডেভেলপমেন্টে)
 # ------------------------------
-print("SECRET_KEY:", SECRET_KEY)
-print("JWT_SECRET:", JWT_SECRET)
-print("APPLE_CALLBACK_URL =", APPLE_CALLBACK_URL)
+if DEBUG:
+    print("SECRET_KEY:", SECRET_KEY)
+    print("JWT_SECRET:", JWT_SECRET)
+    print("APPLE_CALLBACK_URL =", APPLE_CALLBACK_URL)
