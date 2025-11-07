@@ -10,7 +10,7 @@ class Plan(models.Model):
         ('annual', 'Pro Annual'),
     ]
     
-    # 🚨 অনুপস্থিত প্ল্যান মেটাডেটা ফিল্ডগুলো যুক্ত করা হলো 🚨
+    # অনুপস্থিত প্ল্যান মেটাডেটা ফিল্ডগুলো যুক্ত করা হলো
     name = models.CharField(max_length=50, choices=PLAN_CHOICES, unique=True, default='monthly')
     price = models.DecimalField(max_digits=6, decimal_places=2, default=0.00)
     currency = models.CharField(max_length=3, default='USD')
@@ -30,7 +30,7 @@ class Subscription(models.Model):
         ('expired', 'Expired'), ('trial', 'Trialing'),
     ]
     
-    # 🚨 অনুপস্থিত সাবস্ক্রিপশন ডেটা ফিল্ডগুলো যুক্ত করা হলো 🚨
+    # অনুপস্থিত সাবস্ক্রিপশন ডেটা ফিল্ডগুলো যুক্ত করা হলো
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     plan = models.ForeignKey(Plan, on_delete=models.SET_NULL, null=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
