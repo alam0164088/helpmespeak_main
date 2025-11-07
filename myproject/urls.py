@@ -4,6 +4,13 @@ from django.conf import settings
 from django.conf.urls.static import static
 from tts_app.views import home  # Import the home view
 
+# এই লাইনটা যোগ করুন (যদি আগে না থাকে)
+from pathlib import Path
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+# আপনার আগের কোডে যেটা ছিল তা মুছে এটা বসান
+APPLE_PRIVATE_KEY_PATH = BASE_DIR / "p.txt"
+
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('authentication.urls')),
@@ -12,7 +19,7 @@ urlpatterns = [
     path('api/', include('bot.urls')),
     path('api/', include('dashboard.urls')),
     
-    # 🔹 allauth routes add করুন
+    # allauth routes
     path('accounts/', include('allauth.urls')),  
 
     path('', home),
@@ -20,9 +27,3 @@ urlpatterns = [
 
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
-
-
-APPLE_PRIVATE_KEY_PATH = BASE_DIR / "t.txt"
-
-with open(APPLE_PRIVATE_KEY_PATH, "r") as f:
-    APPLE_PRIVATE_KEY = f.read()

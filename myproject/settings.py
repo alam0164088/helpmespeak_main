@@ -272,10 +272,11 @@ from django.conf import settings
 print("SECRET_KEY:", SECRET_KEY)
 print("JWT_SECRET:", JWT_SECRET)
 
-import os
+# নতুন কোড:
+APPLE_PRIVATE_KEY_PATH = BASE_DIR / "t.txt"
 
-APPLE_PRIVATE_KEY = os.getenv("APPLE_PRIVATE_KEY")
-if APPLE_PRIVATE_KEY:
-    APPLE_PRIVATE_KEY = APPLE_PRIVATE_KEY.replace("\\n", "\n")
+if APPLE_PRIVATE_KEY_PATH.exists():
+    APPLE_PRIVATE_KEY = APPLE_PRIVATE_KEY_PATH.read_text()
+    APPLE_PRIVATE_KEY = APPLE_PRIVATE_KEY.replace("\\n", "\n").strip()
 else:
-    raise ValueError("APPLE_PRIVATE_KEY is not set!")
+    raise FileNotFoundError(f"Apple private key not found at {APPLE_PRIVATE_KEY_PATH}")
