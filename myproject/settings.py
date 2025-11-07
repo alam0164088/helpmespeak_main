@@ -276,3 +276,4 @@ from django.conf import settings
 print("SECRET_KEY:", SECRET_KEY)
 print("JWT_SECRET:", JWT_SECRET)
 
+print("APPLE_CALLBACK_URL =", redirect_uri)
