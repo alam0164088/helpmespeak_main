@@ -215,10 +215,23 @@ GOOGLE_REDIRECT_URI = env("GOOGLE_REDIRECT_URI")
 APPLE_TEAM_ID = os.getenv("APPLE_TEAM_ID")
 APPLE_CLIENT_ID = os.getenv("APPLE_CLIENT_ID")
 APPLE_KEY_ID = os.getenv("APPLE_KEY_ID")
-APPLE_PRIVATE_KEY = os.getenv("APPLE_PRIVATE_KEY").replace("\\n", "\n")  # \n ঠিক করার জন্য
+# APPLE_PRIVATE_KEY = os.getenv("APPLE_PRIVATE_KEY").replace("\\n", "\n")  # \n ঠিক করার জন্য
 APPLE_BUNDLE_ID = os.getenv("APPLE_BUNDLE_ID")
 redirect_uri = os.getenv("APPLE_CALLBACK_URL")
+# ------------------------------
+# Apple Private Key লোড করুন প্রথমে
+# ------------------------------
+APPLE_PRIVATE_KEY_PATH = BASE_DIR / "p.txt"
 
+if APPLE_PRIVATE_KEY_PATH.exists():
+    APPLE_PRIVATE_KEY = APPLE_PRIVATE_KEY_PATH.read_text()
+    APPLE_PRIVATE_KEY = APPLE_PRIVATE_KEY.replace("\\n", "\n").strip()
+else:
+    raise FileNotFoundError(f"Apple private key not found at {APPLE_PRIVATE_KEY_PATH}")
+
+# ------------------------------
+# Apple Client Secret জেনারেট ফাংশন
+# ------------------------------
 import jwt, time
 
 def generate_apple_client_secret():
@@ -232,19 +245,10 @@ def generate_apple_client_secret():
     }
     return jwt.encode(payload, APPLE_PRIVATE_KEY, algorithm="ES256", headers=headers)
 
-
-
-
+# ------------------------------
+# তারপর SOCIALACCOUNT_PROVIDERS এ ব্যবহার
+# ------------------------------
 SOCIALACCOUNT_PROVIDERS = {
-    'google': {
-        'APP': {
-            'client_id': GOOGLE_CLIENT_ID,
-            'secret': GOOGLE_CLIENT_SECRET,
-            'key': ''
-        },
-        'SCOPE': ['profile', 'email'],
-        'AUTH_PARAMS': {'access_type': 'online'},
-    },
     'apple': {
         'APP': {
             'client_id': APPLE_CLIENT_ID,
@@ -272,11 +276,3 @@ from django.conf import settings
 print("SECRET_KEY:", SECRET_KEY)
 print("JWT_SECRET:", JWT_SECRET)
 
-# নতুন কোড:
-APPLE_PRIVATE_KEY_PATH = BASE_DIR / "t.txt"
-
-if APPLE_PRIVATE_KEY_PATH.exists():
-    APPLE_PRIVATE_KEY = APPLE_PRIVATE_KEY_PATH.read_text()
-    APPLE_PRIVATE_KEY = APPLE_PRIVATE_KEY.replace("\\n", "\n").strip()
-else:
-    raise FileNotFoundError(f"Apple private key not found at {APPLE_PRIVATE_KEY_PATH}")
