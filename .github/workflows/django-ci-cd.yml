@@ -37,6 +37,7 @@ jobs:
           python-version: '3.11'
 
       # ৩. এনভায়রনমেন্ট ভেরিয়েবল সেট করা
+
       - name: Set environment variables
         run: |
           echo "DJANGO_SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}" >> $GITHUB_ENV
@@ -60,6 +61,9 @@ jobs:
           echo "APPLE_PRIVATE_KEY=${{ secrets.APPLE_PRIVATE_KEY }}" >> $GITHUB_ENV
           echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}" >> $GITHUB_ENV
 
+
+      
+     
       # ৪. ডিপেনডেন্সি ইন্সটল
       - name: Install dependencies
         run: |
