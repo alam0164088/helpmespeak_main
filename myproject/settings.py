@@ -3,6 +3,7 @@ from pathlib import Path
 from datetime import timedelta
 import environ
 import dj_database_url
+import jwt
 
 # ------------------------------
 # Base directory
@@ -19,29 +20,26 @@ env = environ.Env(
     EMAIL_USE_TLS=(bool, True)
 )
 
-# Load .env file if exists
-env_file = os.path.join(BASE_DIR, ".env")
-if os.path.exists(env_file):
-    print(f".env file found at {env_file}, loading it...")
-    environ.Env.read_env(env_file)
+env_file = BASE_DIR / ".env"
+if env_file.exists():
+    print(f".env file found, loading...")
+    environ.Env.read_env(str(env_file))
 else:
     print(".env file not found, using system environment variables")
 
 # ------------------------------
 # Core settings
 # ------------------------------
-SECRET_KEY = env("SECRET_KEY", default="unsafe-secret-key")
+SECRET_KEY = env("DJANGO_SECRET_KEY", default="unsafe-secret-key")
 DEBUG = env.bool("DEBUG", default=True)
 ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["127.0.0.1", "localhost"])
 
-# JWT secret (use for all JWT encode/decode)
 JWT_SECRET = env("JWT_SECRET", default=SECRET_KEY)
 
 # ------------------------------
 # Installed apps
 # ------------------------------
 INSTALLED_APPS = [
-    # Default
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -50,7 +48,6 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "django.contrib.sites",
 
-    # Third-party
     "corsheaders",
     "rest_framework",
     "rest_framework.authtoken",
@@ -63,7 +60,6 @@ INSTALLED_APPS = [
     "allauth.socialaccount.providers.google",
     "allauth.socialaccount.providers.apple",
 
-    # Local apps
     "authentication",
     "payment",
     "tts_app",
@@ -87,7 +83,6 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "allauth.account.middleware.AccountMiddleware",
-
 ]
 
 # ------------------------------
@@ -141,13 +136,11 @@ REST_FRAMEWORK = {
 # ------------------------------
 # JWT Settings
 # ------------------------------
-SECRET_KEY = env("SECRET_KEY", default="unsafe-secret-key")
-JWT_SECRET = env("JWT_SECRET", default=SECRET_KEY)
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(days=15),
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=30),
     "AUTH_HEADER_TYPES": ("Bearer",),
-    "SIGNING_KEY": JWT_SECRET,  # Used for signing tokens
+    "SIGNING_KEY": JWT_SECRET,
 }
 
 # ------------------------------
@@ -200,9 +193,9 @@ GOOGLE_API_KEY = env("GOOGLE_API_KEY", default=None)
 OPENAI_API_KEY = env("OPENAI_API_KEY", default=None)
 
 if not GOOGLE_API_KEY:
-    print("⚠️ GOOGLE_API_KEY not configured in .env or system environment!")
+    print("WARNING: GOOGLE_API_KEY not configured!")
 else:
-    print(f"✅ GOOGLE_API_KEY loaded successfully: {GOOGLE_API_KEY[:4]}...{GOOGLE_API_KEY[-4:]}")
+    print(f"SUCCESS: GOOGLE_API_KEY loaded: {GOOGLE_API_KEY[:4]}...{GOOGLE_API_KEY[-4:]}")
 
 # ------------------------------
 # Google & Apple OAuth
@@ -211,43 +204,35 @@ GOOGLE_CLIENT_ID = env("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = env("GOOGLE_CLIENT_SECRET")
 GOOGLE_REDIRECT_URI = env("GOOGLE_REDIRECT_URI")
 
-
-APPLE_TEAM_ID = env("APPLE_TEAM_ID")
-APPLE_CLIENT_ID = env("APPLE_CLIENT_ID")
-APPLE_KEY_ID = env("APPLE_KEY_ID")
 APPLE_BUNDLE_ID = env("APPLE_BUNDLE_ID")
-redirect_uri = env("APPLE_CALLBACK_URL")
-# ------------------------------
-# Apple Private Key লোড করুন প্রথমে
-# ------------------------------
-APPLE_PRIVATE_KEY_PATH = BASE_DIR / "p.txt"
+APPLE_TEAM_ID = env("APPLE_TEAM_ID")
+APPLE_KEY_ID = env("APPLE_KEY_ID")
+APPLE_CLIENT_ID = env("APPLE_CLIENT_ID")
+APPLE_CALLBACK_URL = env("APPLE_CALLBACK_URL")
+APPLE_PRIVATE_KEY = env("APPLE_PRIVATE_KEY")
 
-if APPLE_PRIVATE_KEY_PATH.exists():
-    APPLE_PRIVATE_KEY = APPLE_PRIVATE_KEY_PATH.read_text()
-    APPLE_PRIVATE_KEY = APPLE_PRIVATE_KEY.replace("\\n", "\n").strip()
-    print("✅ APPLE_PRIVATE_KEY loaded successfully!")
-    print("First 50 chars:", APPLE_PRIVATE_KEY[:50]) 
-else:
-    raise FileNotFoundError(f"Apple private key not found at {APPLE_PRIVATE_KEY_PATH}")
+if APPLE_PRIVATE_KEY:
+    APPLE_PRIVATE_KEY = APPLE_PRIVATE_KEY.replace("\\n", "\n")
 
 # ------------------------------
-# Apple Client Secret জেনারেট ফাংশন
+# Apple Client Secret Generator
 # ------------------------------
-import jwt, time
-
 def generate_apple_client_secret():
-    headers = {"kid": APPLE_KEY_ID, "alg": "ES256"}
+    from django.conf import settings
+    from datetime import datetime, timedelta
+
+    headers = {"alg": "ES256", "kid": settings.APPLE_KEY_ID}
     payload = {
-        "iss": APPLE_TEAM_ID,
-        "iat": int(time.time()),
-        "exp": int(time.time()) + 86400*180,  # 6 মাস
+        "iss": settings.APPLE_TEAM_ID,
+        "iat": datetime.utcnow(),
+        "exp": datetime.utcnow() + timedelta(days=180),
         "aud": "https://appleid.apple.com",
-        "sub": APPLE_CLIENT_ID,
+        "sub": settings.APPLE_CLIENT_ID
     }
-    return jwt.encode(payload, APPLE_PRIVATE_KEY, algorithm="ES256", headers=headers)
+    return jwt.encode(payload, settings.APPLE_PRIVATE_KEY, algorithm="ES256", headers=headers)
 
 # ------------------------------
-# তারপর SOCIALACCOUNT_PROVIDERS এ ব্যবহার
+# SOCIALACCOUNT_PROVIDERS
 # ------------------------------
 SOCIALACCOUNT_PROVIDERS = {
     'apple': {
@@ -260,11 +245,14 @@ SOCIALACCOUNT_PROVIDERS = {
         'AUTH_PARAMS': {
             'response_type': 'code id_token',
             'response_mode': 'form_post',
-            'redirect_uri': redirect_uri
+            'redirect_uri': APPLE_CALLBACK_URL
         }
+    },
+    'google': {
+        'SCOPE': ['profile', 'email'],
+        'AUTH_PARAMS': {'access_type': 'offline'},
     }
 }
-
 
 # ------------------------------
 # Apple IAP & Google Service Account
@@ -273,8 +261,9 @@ APPLE_SHARED_SECRET = env("APPLE_SHARED_SECRET", default="")
 GOOGLE_PACKAGE_NAME = env("GOOGLE_PACKAGE_NAME", default="")
 GOOGLE_SERVICE_ACCOUNT_FILE = env("GOOGLE_SERVICE_ACCOUNT_FILE", default="")
 
-from django.conf import settings
+# ------------------------------
+# Debug
+# ------------------------------
 print("SECRET_KEY:", SECRET_KEY)
 print("JWT_SECRET:", JWT_SECRET)
-
-print("APPLE_CALLBACK_URL =", redirect_uri)
+print("APPLE_CALLBACK_URL =", APPLE_CALLBACK_URL)
