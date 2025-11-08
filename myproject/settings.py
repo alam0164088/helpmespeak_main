@@ -31,7 +31,8 @@ else:
 # ------------------------------
 SECRET_KEY = env("DJANGO_SECRET_KEY", default="unsafe-secret-key")
 DEBUG = env.bool("DEBUG", default=True)
-ALLOWED_HOSTS = [host.strip() for host in env.list("ALLOWED_HOSTS", default=["127.0.0.1", "localhost"])]
+ALLOWED_HOSTS = ['api.helpmespeak.app', '15.236.180.222', 'localhost', '127.0.0.1']
+
 
 
 JWT_SECRET = env("JWT_SECRET", default=SECRET_KEY)
