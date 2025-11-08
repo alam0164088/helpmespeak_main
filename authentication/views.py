@@ -635,7 +635,114 @@ class GoogleLoginView(APIView):
         except Exception as e:
             logger.error(f"Google login failed: {e}")
             return Response({"error": "Google login failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+    # GOOGLE CALLBACK VIEW (Server-side redirect handler)
+class GoogleCallbackView(APIView):
+    permission_classes = [AllowAny]
 
+    def get(self, request):
+        code = request.GET.get('code')
+        error = request.GET.get('error')
+
+        if error:
+            return Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not code:
+            return Response({"error": "Authorization code missing"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            # Exchange code for tokens
+            token_response = requests.post('https://oauth2.googleapis.com/token', data={
+                'code': code,
+                'client_id': settings.GOOGLE_CLIENT_ID,
+                'client_secret': settings.GOOGLE_CLIENT_SECRET,
+                'redirect_uri': settings.GOOGLE_REDIRECT_URI,
+                'grant_type': 'authorization_code'
+            }).json()
+
+            if 'error' in token_response:
+                return Response({"error": token_response.get('error_description')}, status=status.HTTP_400_BAD_REQUEST)
+
+            access_token = token_response['access_token']
+            user_info = requests.get(
+                'https://www.googleapis.com/oauth2/v2/userinfo',
+                headers={'Authorization': f'Bearer {access_token}'}
+            ).json()
+
+            email = user_info.get('email')
+            if not email:
+                return Response({"error": "Google did not provide an email"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Get or create user
+            user, created = User.objects.get_or_create(email=email, defaults={
+                'full_name': user_info.get('name', ''),
+                'is_email_verified': True,
+                'is_active': True,
+            })
+            if created:
+                user.set_unusable_password()
+                user.save()
+                Profile.objects.create(user=user)
+                logger.info(f"New Google user via callback: {email}")
+            else:
+                user.is_active = True
+                user.is_email_verified = True
+                user.save()
+
+            # Generate tokens
+            refresh = RefreshToken.for_user(user)
+            Token.objects.update_or_create(
+                user=user,
+                defaults={
+                    'email': user.email,
+                    'refresh_token': str(refresh),
+                    'access_token': str(refresh.access_token),
+                    'refresh_token_expires_at': timezone.now() + refresh.lifetime,
+                    'access_token_expires_at': timezone.now() + timedelta(minutes=15),
+                }
+            )
+
+            # Return tokens in JSON (for SPA/mobile to read)
+            return Response({
+                "access_token": str(refresh.access_token),
+                "access_token_expires_in": 900,
+                "refresh_token": str(refresh),
+                "refresh_token_expires_in": int(refresh.lifetime.total_seconds()),
+                "token_type": "Bearer",
+                "user": {
+                    "id": user.id,
+                    "email": user.email,
+                    "full_name": user.full_name,
+                    "email_verified": user.is_email_verified,
+                    "role": user.role
+                }
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Google callback failed: {e}")
+            return Response({"error": "Google login failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+# =======================
+# APPLE CALLBACK VIEW (DEBUG/OPTIONAL)
+# =======================
+class AppleCallbackView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        code = request.data.get("code")
+        id_token = request.data.get("id_token")
+        user_data = request.data.get("user")
+        state = request.data.get("state")
+
+        # Logging for debug
+        logger.info(f"Apple Callback received - code: {code}, id_token: {id_token}, user: {user_data}, state: {state}")
+
+        return Response({
+            "code": code,
+            "id_token": id_token,
+            "user": user_data,
+            "state": state
+        }, status=status.HTTP_200_OK)
 
 # APPLE LOGIN VIEW
 # ------------------------------
