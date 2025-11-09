@@ -12,7 +12,7 @@ from django.utils.decorators import method_decorator
 import jwt
 import requests
 import logging
-from datetime import datetime, timedelta, timezone  # timezone যোগ করা হয়েছে
+from datetime import datetime, timedelta
 from uuid import uuid4
 
 from .models import Token, Profile, PasswordResetSession
@@ -542,7 +542,6 @@ class MeView(APIView):
     def patch(self, request):
         return self.put(request)
 
-
 # =======================
 # SOCIAL LOGIN VIEWS
 # =======================
@@ -586,7 +585,7 @@ class GoogleCallbackView(APIView):
                 data={
                     'code': code,
                     'client_id': settings.GOOGLE_CLIENT_ID,
-                    'client_secret': settings.GOOGLE_CLIENT_SECRET,  # Corrected
+                    'client_secret': settings.GOOGLE_CLIENT_SECRET,
                     'redirect_uri': settings.GOOGLE_REDIRECT_URI,
                     'grant_type': 'authorization_code'
                 },
@@ -684,7 +683,7 @@ class GoogleCallbackView(APIView):
 
 def generate_apple_client_secret():
     headers = {"alg": "ES256", "kid": settings.APPLE_KEY_ID}
-    now = datetime.now(timezone.utc)  # Correct UTC time
+    now = datetime.now(timezone.utc)
     payload = {
         "iss": settings.APPLE_TEAM_ID,
         "iat": int(now.timestamp()),
@@ -705,8 +704,8 @@ class AppleLoginView(APIView):
             f"https://appleid.apple.com/auth/authorize?"
             f"client_id={settings.APPLE_CLIENT_ID}&"
             f"redirect_uri={settings.APPLE_CALLBACK_URL}&"
-            f"response_type=code id_token&"
-            f"scope=name email&"
+            f"response_type=code%20id_token&"
+            f"scope=name%20email&"
             f"response_mode=form_post"
         )
         return Response({"auth_url": auth_url}, status=status.HTTP_200_OK)
@@ -764,7 +763,8 @@ class AppleCallbackView(APIView):
             last_name = ""
             if user_data:
                 try:
-                    name = user_data.get("name", {})
+                    import json
+                    name = json.loads(user_data).get("name", {})
                     first_name = name.get("firstName", "")
                     last_name = name.get("lastName", "")
                 except:
@@ -774,7 +774,6 @@ class AppleCallbackView(APIView):
             user, created = User.objects.get_or_create(
                 email=email,
                 defaults={
-                    "username": email,
                     "full_name": full_name,
                     "is_email_verified": True,
                     "is_active": True,
