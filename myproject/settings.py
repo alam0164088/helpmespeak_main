@@ -212,7 +212,6 @@ APPLE_TEAM_ID = env("APPLE_TEAM_ID")
 APPLE_KEY_ID = env("APPLE_KEY_ID")
 APPLE_CLIENT_ID = env("APPLE_CLIENT_ID")
 APPLE_CALLBACK_URL = env("APPLE_CALLBACK_URL")
-APPLE_PRIVATE_KEY = env("APPLE_PRIVATE_KEY").replace("\\n", "\n") if env("APPLE_PRIVATE_KEY") else ""
 
 # ------------------------------
 # SOCIALACCOUNT_PROVIDERS
@@ -247,3 +246,23 @@ if DEBUG:
     print("SECRET_KEY:", SECRET_KEY)
     print("JWT_SECRET:", JWT_SECRET)
     print("APPLE_CALLBACK_URL =", APPLE_CALLBACK_URL)
+
+
+
+# ------------------------------
+# Apple Private Key (from p.txt)
+# ------------------------------
+APPLE_PRIVATE_KEY_PATH = BASE_DIR / "p.txt"
+try:
+    with open(APPLE_PRIVATE_KEY_PATH, 'r') as f:
+        APPLE_PRIVATE_KEY = f.read().strip()
+    if DEBUG:
+        print("SUCCESS: Apple private key loaded from p.txt")
+except FileNotFoundError:
+    APPLE_PRIVATE_KEY = ""
+    if DEBUG:
+        print("ERROR: p.txt not found! Apple login will fail.")
+except Exception as e:
+    APPLE_PRIVATE_KEY = ""
+    if DEBUG:
+        print(f"ERROR: Failed to read p.txt: {e}")

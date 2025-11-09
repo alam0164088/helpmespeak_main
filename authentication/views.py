@@ -28,14 +28,12 @@ from .serializers import (
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
-
 # =======================
 # USER AUTHENTICATION VIEWS
 # =======================
 
 class RegisterView(APIView):
     permission_classes = [AllowAny]
-
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
         if serializer.is_valid():
@@ -71,6 +69,8 @@ class RegisterView(APIView):
                     "message": "User created successfully."
                 }, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+# ... বাকি সব views (GoogleCallbackView, AppleCallbackView ইত্যাদি)
 
 
 class InitialAdminSignUpView(APIView):
