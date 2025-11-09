@@ -12,7 +12,7 @@ from django.utils.decorators import method_decorator
 import jwt
 import requests
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone  # timezone যোগ করা হয়েছে
 from uuid import uuid4
 
 from .models import Token, Profile, PasswordResetSession
@@ -547,7 +547,6 @@ class MeView(APIView):
 # SOCIAL LOGIN VIEWS
 # =======================
 
-# GOOGLE LOGIN VIEW
 class GoogleLoginView(APIView):
     permission_classes = [AllowAny]
 
@@ -564,38 +563,74 @@ class GoogleLoginView(APIView):
         )
         return Response({"auth_url": google_auth_url}, status=status.HTTP_200_OK)
 
-    def post(self, request):
-        code = request.data.get('code')
+
+class GoogleCallbackView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        code = request.GET.get('code')
+        error = request.GET.get('error')
+
+        if error:
+            logger.error(f"Google OAuth error: {error}")
+            return Response({"error": f"Google OAuth failed: {error}"}, status=status.HTTP_400_BAD_REQUEST)
+
         if not code:
+            logger.error("Google callback: Missing authorization code")
             return Response({"error": "Authorization code missing"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            token_response = requests.post('https://oauth2.googleapis.com/token', data={
-                'code': code,
-                'client_id': settings.GOOGLE_CLIENT_ID,
-                'client_secret': settings.GOOGLE_CLIENT_SECRET,
-                'redirect_uri': settings.GOOGLE_REDIRECT_URI,
-                'grant_type': 'authorization_code'
-            }).json()
+            logger.info("Exchanging Google code for tokens...")
+            token_response = requests.post(
+                'https://oauth2.googleapis.com/token',
+                data={
+                    'code': code,
+                    'client_id': settings.GOOGLE_CLIENT_ID,
+                    'client_secret': settings.GOOGLE_CLIENT_SECRET,  # Corrected
+                    'redirect_uri': settings.GOOGLE_REDIRECT_URI,
+                    'grant_type': 'authorization_code'
+                },
+                timeout=10
+            )
+            token_data = token_response.json()
+            logger.info(f"Google token response: {token_data}")
 
-            if 'error' in token_response:
-                return Response({"error": token_response.get('error_description')}, status=status.HTTP_400_BAD_REQUEST)
+            if 'error' in token_data:
+                error_msg = token_data.get('error_description', 'Unknown error')
+                logger.error(f"Token exchange failed: {error_msg}")
+                return Response({"error": f"Token exchange failed: {error_msg}"}, status=status.HTTP_400_BAD_REQUEST)
 
-            access_token = token_response['access_token']
-            user_info = requests.get(
+            access_token = token_data.get('access_token')
+            if not access_token:
+                logger.error("No access token from Google")
+                return Response({"error": "No access token from Google"}, status=status.HTTP_400_BAD_REQUEST)
+
+            logger.info("Fetching Google user info...")
+            user_info_response = requests.get(
                 'https://www.googleapis.com/oauth2/v2/userinfo',
-                headers={'Authorization': f'Bearer {access_token}'}
-            ).json()
+                headers={'Authorization': f'Bearer {access_token}'},
+                timeout=10
+            )
+            user_info = user_info_response.json()
+            logger.info(f"Google user info: {user_info}")
+
+            if user_info_response.status_code != 200:
+                logger.error(f"Failed to fetch user info: {user_info}")
+                return Response({"error": "Failed to fetch user info"}, status=status.HTTP_400_BAD_REQUEST)
 
             email = user_info.get('email')
             if not email:
-                return Response({"error": "Google did not provide an email"}, status=status.HTTP_400_BAD_REQUEST)
+                logger.error("Google did not provide email")
+                return Response({"error": "Email not provided by Google"}, status=status.HTTP_400_BAD_REQUEST)
 
-            user, created = User.objects.get_or_create(email=email, defaults={
-                'full_name': user_info.get('name', ''),
-                'is_email_verified': True,
-                'is_active': True,
-            })
+            user, created = User.objects.get_or_create(
+                email=email,
+                defaults={
+                    'full_name': user_info.get('name', ''),
+                    'is_email_verified': True,
+                    'is_active': True,
+                }
+            )
             if created:
                 user.set_unusable_password()
                 user.save()
@@ -605,91 +640,8 @@ class GoogleLoginView(APIView):
                 user.is_active = True
                 user.is_email_verified = True
                 user.save()
+                logger.info(f"Google login: {email}")
 
-            refresh = RefreshToken.for_user(user)
-            Token.objects.create(
-                user=user,
-                email=user.email,
-                refresh_token=str(refresh),
-                access_token=str(refresh.access_token),
-                refresh_token_expires_at=timezone.now() + refresh.lifetime,
-                access_token_expires_at=timezone.now() + timedelta(minutes=15)
-            )
-
-            logger.info(f"Google login success: {user.email}")
-            return Response({
-                "access_token": str(refresh.access_token),
-                "access_token_expires_in": 900,
-                "refresh_token": str(refresh),
-                "refresh_token_expires_in": int(refresh.lifetime.total_seconds()),
-                "token_type": "Bearer",
-                "user": {
-                    "id": user.id,
-                    "email": user.email,
-                    "full_name": user.full_name,
-                    "email_verified": user.is_email_verified,
-                    "role": user.role
-                }
-            }, status=status.HTTP_200_OK)
-
-        except Exception as e:
-            logger.error(f"Google login failed: {e}")
-            return Response({"error": "Google login failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
-    # GOOGLE CALLBACK VIEW (Server-side redirect handler)
-class GoogleCallbackView(APIView):
-    permission_classes = [AllowAny]
-
-    def get(self, request):
-        code = request.GET.get('code')
-        error = request.GET.get('error')
-
-        if error:
-            return Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
-
-        if not code:
-            return Response({"error": "Authorization code missing"}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            # Exchange code for tokens
-            token_response = requests.post('https://oauth2.googleapis.com/token', data={
-                'code': code,
-                'client_id': settings.GOOGLE_CLIENT_ID,
-                'client_secret': settings.GOOGLE_CLIENT_SECRET,
-                'redirect_uri': settings.GOOGLE_REDIRECT_URI,
-                'grant_type': 'authorization_code'
-            }).json()
-
-            if 'error' in token_response:
-                return Response({"error": token_response.get('error_description')}, status=status.HTTP_400_BAD_REQUEST)
-
-            access_token = token_response['access_token']
-            user_info = requests.get(
-                'https://www.googleapis.com/oauth2/v2/userinfo',
-                headers={'Authorization': f'Bearer {access_token}'}
-            ).json()
-
-            email = user_info.get('email')
-            if not email:
-                return Response({"error": "Google did not provide an email"}, status=status.HTTP_400_BAD_REQUEST)
-
-            # Get or create user
-            user, created = User.objects.get_or_create(email=email, defaults={
-                'full_name': user_info.get('name', ''),
-                'is_email_verified': True,
-                'is_active': True,
-            })
-            if created:
-                user.set_unusable_password()
-                user.save()
-                Profile.objects.create(user=user)
-                logger.info(f"New Google user via callback: {email}")
-            else:
-                user.is_active = True
-                user.is_email_verified = True
-                user.save()
-
-            # Generate tokens
             refresh = RefreshToken.for_user(user)
             Token.objects.update_or_create(
                 user=user,
@@ -702,7 +654,7 @@ class GoogleCallbackView(APIView):
                 }
             )
 
-            # Return tokens in JSON (for SPA/mobile to read)
+            logger.info(f"Google login successful: {email}")
             return Response({
                 "access_token": str(refresh.access_token),
                 "access_token_expires_in": 900,
@@ -718,64 +670,37 @@ class GoogleCallbackView(APIView):
                 }
             }, status=status.HTTP_200_OK)
 
+        except requests.RequestException as e:
+            logger.exception(f"Network error in Google login: {e}")
+            return Response({"error": "Network error. Try again."}, status=status.HTTP_502_BAD_GATEWAY)
         except Exception as e:
-            logger.error(f"Google callback failed: {e}")
-            return Response({"error": "Google login failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.exception(f"Unexpected error in GoogleCallbackView: {e}")
+            return Response({"error": "Internal server error. Check logs."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 # =======================
-# APPLE CALLBACK VIEW (DEBUG/OPTIONAL)
+# APPLE LOGIN VIEWS
 # =======================
-class AppleCallbackView(APIView):
-    permission_classes = [AllowAny]
 
-    def post(self, request):
-        code = request.data.get("code")
-        id_token = request.data.get("id_token")
-        user_data = request.data.get("user")
-        state = request.data.get("state")
-
-        # Logging for debug
-        logger.info(f"Apple Callback received - code: {code}, id_token: {id_token}, user: {user_data}, state: {state}")
-
-        return Response({
-            "code": code,
-            "id_token": id_token,
-            "user": user_data,
-            "state": state
-        }, status=status.HTTP_200_OK)
-
-# APPLE LOGIN VIEW
-# ------------------------------
-# Apple Client Secret Generator
-# ------------------------------
 def generate_apple_client_secret():
-    from django.conf import settings
-    from datetime import datetime, timedelta
-    import jwt
-
     headers = {"alg": "ES256", "kid": settings.APPLE_KEY_ID}
+    now = datetime.now(timezone.utc)  # Correct UTC time
     payload = {
         "iss": settings.APPLE_TEAM_ID,
-        "iat": datetime.utcnow(),
-        "exp": datetime.utcnow() + timedelta(days=180),
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(days=180)).timestamp()),
         "aud": "https://appleid.apple.com",
         "sub": settings.APPLE_CLIENT_ID,
     }
     return jwt.encode(payload, settings.APPLE_PRIVATE_KEY, algorithm="ES256", headers=headers)
 
 
-# ------------------------------
-# Apple Login View (FIXED)
-# ------------------------------
 class AppleLoginView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
         if not settings.APPLE_CALLBACK_URL:
-            return Response(
-                {"error": "Apple OAuth not configured"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({"error": "Apple OAuth not configured"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         auth_url = (
             f"https://appleid.apple.com/auth/authorize?"
             f"client_id={settings.APPLE_CLIENT_ID}&"
@@ -786,19 +711,23 @@ class AppleLoginView(APIView):
         )
         return Response({"auth_url": auth_url}, status=status.HTTP_200_OK)
 
+
+class AppleCallbackView(APIView):
+    permission_classes = [AllowAny]
+
     def post(self, request):
         code = request.data.get("code")
+        id_token = request.data.get("id_token")
+        user_data = request.data.get("user")
+        state = request.data.get("state")
+
+        logger.info(f"Apple Callback: code={bool(code)}, id_token={bool(id_token)}, user={bool(user_data)}, state={state}")
+
         if not code:
-            return Response(
-                {"error": "Missing authorization code"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({"error": "Missing authorization code"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            # Generate client secret
             client_secret = generate_apple_client_secret()
-
-            # Exchange code for tokens
             token_response = requests.post(
                 "https://appleid.apple.com/auth/token",
                 data={
@@ -813,47 +742,35 @@ class AppleLoginView(APIView):
             ).json()
 
             if token_response.get("error"):
-                return Response(
-                    {"error": token_response.get("error_description", "Token exchange failed")},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+                error_msg = token_response.get("error_description", "Unknown error")
+                logger.error(f"Apple token exchange failed: {error_msg}")
+                return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
 
             id_token = token_response.get("id_token")
             if not id_token:
-                return Response(
-                    {"error": "No id_token from Apple"},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+                return Response({"error": "No id_token from Apple"}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Decode id_token (no verification needed)
             try:
                 decoded = jwt.decode(id_token, options={"verify_signature": False})
             except jwt.PyJWTError as e:
                 logger.error(f"Invalid id_token: {e}")
-                return Response(
-                    {"error": "Invalid Apple token"},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+                return Response({"error": "Invalid Apple token"}, status=status.HTTP_400_BAD_REQUEST)
 
             email = decoded.get("email")
             if not email:
-                return Response(
-                    {"error": "Email not provided by Apple"},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+                return Response({"error": "Email not provided by Apple"}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Extract name only on first login
             first_name = ""
             last_name = ""
-            user_data = request.data.get("user", {})
             if user_data:
-                name = user_data.get("name", {})
-                first_name = name.get("firstName", "")
-                last_name = name.get("lastName", "")
-
+                try:
+                    name = user_data.get("name", {})
+                    first_name = name.get("firstName", "")
+                    last_name = name.get("lastName", "")
+                except:
+                    pass
             full_name = f"{first_name} {last_name}".strip() or email.split("@")[0]
 
-            # Get or create user
             user, created = User.objects.get_or_create(
                 email=email,
                 defaults={
@@ -863,14 +780,12 @@ class AppleLoginView(APIView):
                     "is_active": True,
                 }
             )
-
             if created:
                 user.set_unusable_password()
                 user.save()
                 Profile.objects.create(user=user)
                 logger.info(f"New Apple user: {email}")
             else:
-                # Update name if provided and changed
                 if first_name and user.full_name != full_name:
                     user.full_name = full_name
                     user.save()
@@ -879,65 +794,36 @@ class AppleLoginView(APIView):
                 user.save()
                 logger.info(f"Apple login: {email}")
 
-            # Generate JWT
             refresh = RefreshToken.for_user(user)
-            refresh_token_str = str(refresh)
-            access_token_str = str(refresh.access_token)
-
-            # Update or create token
             Token.objects.update_or_create(
                 user=user,
                 defaults={
                     "email": user.email,
-                    "refresh_token": refresh_token_str,
-                    "access_token": access_token_str,
+                    "refresh_token": str(refresh),
+                    "access_token": str(refresh.access_token),
                     "refresh_token_expires_at": timezone.now() + refresh.lifetime,
                     "access_token_expires_at": timezone.now() + timedelta(minutes=15),
                 }
             )
 
-            return Response(
-                {
-                    "access_token": access_token_str,
-                    "access_token_expires_in": 900,
-                    "refresh_token": refresh_token_str,
-                    "refresh_token_expires_in": int(refresh.lifetime.total_seconds()),
-                    "token_type": "Bearer",
-                    "user": {
-                        "id": user.id,
-                        "email": user.email,
-                        "full_name": user.full_name,
-                        "email_verified": user.is_email_verified,
-                        "role": user.role,
-                    },
+            return Response({
+                "access_token": str(refresh.access_token),
+                "access_token_expires_in": 900,
+                "refresh_token": str(refresh),
+                "refresh_token_expires_in": int(refresh.lifetime.total_seconds()),
+                "token_type": "Bearer",
+                "user": {
+                    "id": user.id,
+                    "email": user.email,
+                    "full_name": user.full_name,
+                    "email_verified": user.is_email_verified,
+                    "role": user.role,
                 },
-                status=status.HTTP_200_OK,
-            )
+            }, status=status.HTTP_200_OK)
 
         except requests.RequestException as e:
-            logger.error(f"Apple API error: {e}")
-            return Response(
-                {"error": "Failed to connect to Apple"},
-                status=status.HTTP_502_BAD_GATEWAY
-            )
+            logger.exception(f"Apple API error: {e}")
+            return Response({"error": "Failed to connect to Apple"}, status=status.HTTP_502_BAD_GATEWAY)
         except Exception as e:
-            logger.error(f"Apple login failed: {e}")
-            return Response(
-                {"error": "Apple login failed"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-        
-        # authentication/views.py
-
-
-# DEBUG CALLBACK (Optional)
-class AppleCallbackView(APIView):
-    permission_classes = [AllowAny]
-
-    def post(self, request):
-        return Response({
-            "code": request.data.get("code"),
-            "id_token": request.data.get("id_token"),
-            "user": request.data.get("user"),
-            "state": request.data.get("state")
-        }, status=status.HTTP_200_OK)
+            logger.exception(f"Apple login failed: {e}")
+            return Response({"error": "Apple login failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
