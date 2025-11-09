@@ -930,14 +930,14 @@ class AppleLoginView(APIView):
         # authentication/views.py
 
 
-
-# DEBUG CALLBACK (Optional)
 # DEBUG CALLBACK (Optional)
 class AppleCallbackView(APIView):
+    permission_classes = [AllowAny]
+
     def post(self, request):
         return Response({
             "code": request.data.get("code"),
             "id_token": request.data.get("id_token"),
             "user": request.data.get("user"),
             "state": request.data.get("state")
-        })
+        }, status=status.HTTP_200_OK)
