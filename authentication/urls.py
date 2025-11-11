@@ -47,8 +47,8 @@ urlpatterns = [
     path('auth/me/', MeView.as_view(), name='me'),
 
     # Social logins
-    path('auth/google/', GoogleLoginView.as_view(), name='google-login'),
-    path('auth/google/callback/', GoogleCallbackView.as_view(), name='google-callback'),  # ← add this
+    path('auth/google/', GoogleLoginView.as_view(), name='google-login'),  # ← remove this
+    path('auth/google/callback/', GoogleCallbackView.as_view(), name='google-callback'),
     path('auth/apple/', AppleLoginView.as_view(), name='apple-login'),
-    path('auth/apple/callback/', AppleCallbackView.as_view(), name='apple-callback'),
+    path('auth/apple/callback/', AppleCallbackView.as_view(), name='apple-callback')
 ]
