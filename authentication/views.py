@@ -845,3 +845,4 @@ class AppleCallbackView(APIView):
         except Exception as e:
             logger.exception(f"Apple login failed: {e}")
             return Response({"error": "Apple login failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+# 
