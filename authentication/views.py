@@ -14,6 +14,8 @@ import requests
 import logging
 from datetime import datetime, timedelta
 from uuid import uuid4
+import requests
+from django.core.files.base import ContentFile
 
 from .models import Token, Profile, PasswordResetSession
 from .permissions import IsAdmin
@@ -666,12 +668,21 @@ class GoogleCallbackView(APIView):
             )
 
 
-            # Profile picture access করার জন্য:
-            profile_picture_url = None
-            if hasattr(user, 'profile'):
-                profile = getattr(user, 'profile')
-                if profile.profile_picture:
-                    profile_picture_url = request.build_absolute_uri(profile.profile_picture.url)
+
+
+            profile, _ = Profile.objects.get_or_create(user=user)
+            google_picture = user_info.get('picture')
+
+            if google_picture:
+                resp = requests.get(google_picture)
+                if resp.status_code == 200:
+                    profile.profile_picture.save(
+                        f"{user.username}_google.jpg",
+                        ContentFile(resp.content),
+                        save=True
+                    )
+
+            profile_picture_url = request.build_absolute_uri(profile.profile_picture.url)
 
             return Response({
                 "access_token": str(refresh.access_token),
