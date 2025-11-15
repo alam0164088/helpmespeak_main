@@ -665,6 +665,7 @@ class GoogleCallbackView(APIView):
                 }
             )
 
+
             return Response({
                 "access_token": str(refresh.access_token),
                 "access_token_expires_in": 900,
@@ -676,9 +677,12 @@ class GoogleCallbackView(APIView):
                     "email": user.email,
                     "full_name": user.full_name,
                     "email_verified": user.is_email_verified,
-                    "role": user.role
+                    "role": user.role,
+                    # এখানে profile picture যোগ করলাম
+                    "profile_picture": request.build_absolute_uri(user.profile_picture.url) if user.profile_picture else None
                 }
             }, status=status.HTTP_200_OK)
+
 
         except requests.RequestException as e:
             logger.exception(f"Network error in Google login: {e}")
