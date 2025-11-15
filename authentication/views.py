@@ -688,161 +688,52 @@ class GoogleCallbackView(APIView):
             return Response({"error": "Internal server error."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-# =======================
-# APPLE LOGIN VIEWS
-# =======================
-
-def generate_apple_client_secret():
-    headers = {"alg": "ES256", "kid": settings.APPLE_KEY_ID}
-    now = datetime.now(timezone.utc)
-    payload = {
-        "iss": settings.APPLE_TEAM_ID,
-        "iat": int(now.timestamp()),
-        "exp": int((now + timedelta(days=180)).timestamp()),
-        "aud": "https://appleid.apple.com",
-        "sub": settings.APPLE_CLIENT_ID,
-    }
-    return jwt.encode(payload, settings.APPLE_PRIVATE_KEY, algorithm="ES256", headers=headers)
-
-
-class AppleLoginView(APIView):
+class CustomAppleLogin(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        if not settings.APPLE_CALLBACK_URL:
-            return Response({"error": "Apple OAuth not configured"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        auth_url = (
-            f"https://appleid.apple.com/auth/authorize?"
-            f"client_id={settings.APPLE_CLIENT_ID}&"
-            f"redirect_uri={settings.APPLE_CALLBACK_URL}&"
-            f"response_type=code%20id_token&"
-            f"scope=name%20email&"
-            f"response_mode=form_post"
-        )
-        return Response({"auth_url": auth_url}, status=status.HTTP_200_OK)
-
-
-# =======================
-# APPLE CALLBACK VIEW
-# =======================
-
-class AppleCallbackView(APIView):
-    permission_classes = [AllowAny]
+        # Optional: শুধু test/redirect URL হ্যান্ডল করতে পারো
+        return Response({"message": "Apple login endpoint is active. Use POST with id_token."})
 
     def post(self, request):
-        code = request.data.get("code")
-        user_data = request.data.get("user")
+        id_token = request.data.get("id_token")
+        email = request.data.get("email")
+        given_name = request.data.get("given_name", "")
+        family_name = request.data.get("family_name", "")
 
-        if not code:
-            return Response({"error": "Missing authorization code"}, status=status.HTTP_400_BAD_REQUEST)
+        if not id_token:
+            return Response({"error": "id_token is required"}, status=400)
 
         try:
-            client_secret = generate_apple_client_secret()
-
-            # Exchange code for token
-            token_response = requests.post(
-                "https://appleid.apple.com/auth/token",
-                data={
-                    "grant_type": "authorization_code",
-                    "code": code,
-                    "client_id": settings.APPLE_CLIENT_ID,
-                    "client_secret": client_secret,
-                    "redirect_uri": settings.APPLE_CALLBACK_URL,
-                },
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-                timeout=10
-            ).json()
-
-            if token_response.get("error"):
-                error_msg = token_response.get("error_description", "Unknown error")
-                logger.error(f"Apple token exchange failed: {error_msg}")
-                return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
-
-            id_token = token_response.get("id_token")
-            if not id_token:
-                return Response({"error": "No id_token from Apple"}, status=status.HTTP_400_BAD_REQUEST)
-
-            # Decode id_token
             decoded = jwt.decode(id_token, options={"verify_signature": False})
-            email = decoded.get("email")
-            if not email:
-                return Response({"error": "Email not provided by Apple"}, status=status.HTTP_400_BAD_REQUEST)
-
-            # Extract full name if available
-            first_name = last_name = ""
-            if user_data:
-                try:
-                    import json
-                    name = json.loads(user_data).get("name", {})
-                    first_name = name.get("firstName", "")
-                    last_name = name.get("lastName", "")
-                except:
-                    pass
-            full_name = f"{first_name} {last_name}".strip() or email.split("@")[0]
-
-            # Generate unique username to avoid UNIQUE constraint
-            username_base = email.split("@")[0]
-            username = username_base
-            counter = 1
-            while User.objects.filter(username=username).exists():
-                username = f"{username_base}_{counter}"
-                counter += 1
-
-            # Create or update user
-            user, created = User.objects.get_or_create(
-                email=email,
-                defaults={
-                    "username": username,
-                    "full_name": full_name,
-                    "is_email_verified": True,
-                    "is_active": True,
-                }
-            )
-            if created:
-                user.set_unusable_password()
-                user.save()
-                Profile.objects.create(user=user)
-                logger.info(f"New Apple user created: {email}")
-            else:
-                if full_name and user.full_name != full_name:
-                    user.full_name = full_name
-                user.is_active = True
-                user.is_email_verified = True
-                user.save()
-                logger.info(f"Existing Apple user logged in: {email}")
-
-            # Generate JWT tokens
-            refresh = RefreshToken.for_user(user)
-            Token.objects.update_or_create(
-                user=user,
-                defaults={
-                    "email": user.email,
-                    "refresh_token": str(refresh),
-                    "access_token": str(refresh.access_token),
-                    "refresh_token_expires_at": timezone.now() + refresh.lifetime,
-                    "access_token_expires_at": timezone.now() + timedelta(minutes=15),
-                }
-            )
-
-            return Response({
-                "access_token": str(refresh.access_token),
-                "access_token_expires_in": 900,
-                "refresh_token": str(refresh),
-                "refresh_token_expires_in": int(refresh.lifetime.total_seconds()),
-                "token_type": "Bearer",
-                "user": {
-                    "id": user.id,
-                    "email": user.email,
-                    "full_name": user.full_name,
-                    "email_verified": user.is_email_verified,
-                    "role": user.role,
-                },
-            }, status=status.HTTP_200_OK)
-
-        except requests.RequestException as e:
-            logger.exception(f"Apple API error: {e}")
-            return Response({"error": "Failed to connect to Apple"}, status=status.HTTP_502_BAD_GATEWAY)
+            apple_user_id = decoded.get("sub")
+            if not apple_user_id:
+                return Response({"error": "Invalid Apple Token"}, status=400)
         except Exception as e:
-            logger.exception(f"Apple login failed: {e}")
-            return Response({"error": "Apple login failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-# 
+            return Response({"error": str(e)}, status=400)
+
+        # Create or update user
+        user, created = User.objects.get_or_create(
+            email=email,
+            defaults={
+                "first_name": given_name,
+                "last_name": family_name,
+                "username": f"apple_{apple_user_id}",
+            }
+        )
+
+        refresh = RefreshToken.for_user(user)
+
+        return Response({
+            "success": True,
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+            },
+            "tokens": {
+                "refresh": str(refresh),
+                "access": str(refresh.access_token),
+            }
+        })

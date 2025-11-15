@@ -1,4 +1,5 @@
 # authentication/urls.py
+from .views import CustomAppleLogin
 from django.urls import path
 from .views import (
     RegisterView,
@@ -17,8 +18,9 @@ from .views import (
     MeView,
     GoogleLoginView,
     GoogleCallbackView,  # ← এটা আবার add করো
-    AppleLoginView,
-    AppleCallbackView,
+  
+
+   
 )
 
 urlpatterns = [
@@ -49,6 +51,12 @@ urlpatterns = [
     # Social logins
     path('auth/google/', GoogleLoginView.as_view(), name='google-login'),  # ← remove this
     path('auth/google/callback/', GoogleCallbackView.as_view(), name='google-callback'),
-    path('auth/apple/', AppleLoginView.as_view(), name='apple-login'),
-    path('auth/apple/callback/', AppleCallbackView.as_view(), name='apple-callback')
+    
+
+    path("apple/login/", CustomAppleLogin.as_view(), name="apple_login"),
+
+
+
+
+
 ]
