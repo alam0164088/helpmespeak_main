@@ -546,12 +546,7 @@ class MeView(APIView):
 
 
 
-
-
-# =======================
-# SOCIAL LOGIN VIEWS
-# =======================
-# views.py
+from urllib.parse import unquote  # <--- এই লাইন যোগ করো (যদি না থাকে)
 
 class GoogleLoginView(APIView):
     permission_classes = [AllowAny]
@@ -565,6 +560,9 @@ class GoogleLoginView(APIView):
             f"scope=email profile openid"
         )
         return Response({"auth_url": auth_url})
+    
+
+
 
 class GoogleCallbackView(APIView):
     permission_classes = [AllowAny]
@@ -581,8 +579,12 @@ class GoogleCallbackView(APIView):
             logger.error("Google callback: Missing authorization code")
             return Response({"error": "Authorization code missing"}, status=status.HTTP_400_BAD_REQUEST)
 
+        # ডিকোড করো
+        code = unquote(code)
+        logger.info(f"Decoded Google code: {code[:60]}...")
+
         try:
-            # Exchange code for tokens
+            # Token exchange
             token_response = requests.post(
                 'https://oauth2.googleapis.com/token',
                 data={
@@ -598,13 +600,12 @@ class GoogleCallbackView(APIView):
             logger.info(f"Google token response: {token_data}")
 
             if 'error' in token_data:
-                error_msg = token_data.get('error_description', 'Unknown error')
-                logger.error(f"Token exchange failed: {error_msg}")
-                return Response({"error": f"Token exchange failed: {error_msg}"}, status=status.HTTP_400_BAD_REQUEST)
+                error_desc = token_data.get('error_description', 'Unknown error')
+                logger.error(f"Token exchange failed: {error_desc}")
+                return Response({"error": f"Token exchange failed: {error_desc}"}, status=status.HTTP_400_BAD_REQUEST)
 
             access_token = token_data.get('access_token')
             if not access_token:
-                logger.error("No access token received from Google")
                 return Response({"error": "No access token from Google"}, status=status.HTTP_400_BAD_REQUEST)
 
             # Fetch user info
@@ -613,19 +614,17 @@ class GoogleCallbackView(APIView):
                 headers={'Authorization': f'Bearer {access_token}'},
                 timeout=10
             )
-            user_info = user_info_response.json()
-            logger.info(f"Google user info: {user_info}")
 
             if user_info_response.status_code != 200:
-                logger.error(f"Failed to fetch user info: {user_info}")
+                logger.error(f"User info failed: {user_info_response.text}")
                 return Response({"error": "Failed to fetch user info"}, status=status.HTTP_400_BAD_REQUEST)
 
+            user_info = user_info_response.json()
             email = user_info.get('email')
             if not email:
-                logger.error("Google did not provide email")
                 return Response({"error": "Email not provided by Google"}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Generate unique username to avoid UNIQUE constraint error
+            # Create unique username
             username_base = email.split('@')[0]
             username = username_base
             counter = 1
@@ -643,6 +642,7 @@ class GoogleCallbackView(APIView):
                     'is_active': True,
                 }
             )
+
             if created:
                 user.set_unusable_password()
                 user.save()
@@ -652,6 +652,7 @@ class GoogleCallbackView(APIView):
                 user.is_active = True
                 user.is_email_verified = True
                 user.save()
+                Profile.objects.get_or_create(user=user)
                 logger.info(f"Existing Google user logged in: {email}")
 
             # Generate JWT tokens
@@ -667,22 +668,25 @@ class GoogleCallbackView(APIView):
                 }
             )
 
-
-
-
-            profile, _ = Profile.objects.get_or_create(user=user)
+            # Handle profile picture safely
+            profile = Profile.objects.get(user=user)
             google_picture = user_info.get('picture')
 
-            if google_picture:
-                resp = requests.get(google_picture)
-                if resp.status_code == 200:
-                    profile.profile_picture.save(
-                        f"{user.username}_google.jpg",
-                        ContentFile(resp.content),
-                        save=True
-                    )
+            if google_picture and not profile.image:
+                try:
+                    resp = requests.get(google_picture, timeout=5)
+                    if resp.status_code == 200:
+                        filename = f"{user.username}_google.jpg"
+                        profile.image.save(filename, ContentFile(resp.content), save=True)
+                        logger.info(f"Profile picture saved: {filename}")
+                except Exception as e:
+                    logger.warning(f"Could not download picture for {email}: {e}")
 
-            profile_picture_url = request.build_absolute_uri(profile.profile_picture.url)
+            # নিরাপদ URL
+            profile_picture_url = (
+                request.build_absolute_uri(profile.image.url)
+                if profile.image and profile.image.name else None
+            )
 
             return Response({
                 "access_token": str(refresh.access_token),
@@ -695,18 +699,17 @@ class GoogleCallbackView(APIView):
                     "email": user.email,
                     "full_name": user.full_name,
                     "email_verified": user.is_email_verified,
-                    "role": user.role,
+                    "role": getattr(user, "role", "user"),
                     "profile_picture": profile_picture_url
                 }
             }, status=status.HTTP_200_OK)
 
-
-        except requests.RequestException as e:
-            logger.exception(f"Network error in Google login: {e}")
-            return Response({"error": "Network error. Try again."}, status=status.HTTP_502_BAD_GATEWAY)
         except Exception as e:
-            logger.exception(f"Unexpected error in GoogleCallbackView: {e}")
+            logger.exception(f"CRITICAL ERROR in GoogleCallbackView: {type(e).__name__}: {e}")
             return Response({"error": "Internal server error."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
 
 
 class CustomAppleLogin(APIView):
