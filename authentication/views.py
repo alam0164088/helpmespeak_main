@@ -666,6 +666,13 @@ class GoogleCallbackView(APIView):
             )
 
 
+            # Profile picture access করার জন্য:
+            profile_picture_url = None
+            if hasattr(user, 'profile'):
+                profile = getattr(user, 'profile')
+                if profile.profile_picture:
+                    profile_picture_url = request.build_absolute_uri(profile.profile_picture.url)
+
             return Response({
                 "access_token": str(refresh.access_token),
                 "access_token_expires_in": 900,
@@ -678,8 +685,7 @@ class GoogleCallbackView(APIView):
                     "full_name": user.full_name,
                     "email_verified": user.is_email_verified,
                     "role": user.role,
-                    # এখানে profile picture যোগ করলাম
-                    "profile_picture": request.build_absolute_uri(user.profile_picture.url) if user.profile_picture else None
+                    "profile_picture": profile_picture_url
                 }
             }, status=status.HTTP_200_OK)
 
