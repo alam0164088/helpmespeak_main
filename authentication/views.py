@@ -545,9 +545,28 @@ class MeView(APIView):
         return self.put(request)
 
 
+from urllib.parse import unquote
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import AllowAny
+from rest_framework_simplejwt.tokens import RefreshToken
+from django.utils import timezone
+from django.conf import settings
+from django.core.files.base import ContentFile
+from datetime import timedelta
+import requests
+import logging
+import hashlib
+import jwt
 
-from urllib.parse import unquote  # <--- এই লাইন যোগ করো (যদি না থাকে)
+from django.contrib.auth import get_user_model
+from .models import Token, Profile
 
+User = get_user_model()
+logger = logging.getLogger(__name__)
+
+
+# Google Login URL দিবে
 class GoogleLoginView(APIView):
     permission_classes = [AllowAny]
 
@@ -557,89 +576,62 @@ class GoogleLoginView(APIView):
             f"client_id={settings.GOOGLE_CLIENT_ID}&"
             f"redirect_uri={settings.GOOGLE_REDIRECT_URI}&"
             f"response_type=code&"
-            f"scope=email profile openid"
+            f"scope=email%20profile%20openid&"
+            f"access_type=offline&prompt=consent"
         )
         return Response({"auth_url": auth_url})
-    
 
 
-
+# Google Callback - লগইন সম্পূর্ণ (ইমেজ ১০০% আসবে!)
 class GoogleCallbackView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
         code = request.GET.get('code')
-        error = request.GET.get('error')
-
-        if error:
-            logger.error(f"Google OAuth error: {error}")
-            return Response({"error": f"Google OAuth failed: {error}"}, status=status.HTTP_400_BAD_REQUEST)
-
         if not code:
-            logger.error("Google callback: Missing authorization code")
-            return Response({"error": "Authorization code missing"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "No code provided"}, status=400)
 
-        # ডিকোড করো
         code = unquote(code)
-        logger.info(f"Decoded Google code: {code[:60]}...")
 
         try:
-            # Token exchange
+            # Step 1: Token Exchange
             token_response = requests.post(
-                'https://oauth2.googleapis.com/token',
+                "https://oauth2.googleapis.com/token",
                 data={
-                    'code': code,
-                    'client_id': settings.GOOGLE_CLIENT_ID,
-                    'client_secret': settings.GOOGLE_CLIENT_SECRET,
-                    'redirect_uri': settings.GOOGLE_REDIRECT_URI,
-                    'grant_type': 'authorization_code'
+                    "code": code,
+                    "client_id": settings.GOOGLE_CLIENT_ID,
+                    "client_secret": settings.GOOGLE_CLIENT_SECRET,
+                    "redirect_uri": settings.GOOGLE_REDIRECT_URI,
+                    "grant_type": "authorization_code",
                 },
                 timeout=10
             )
             token_data = token_response.json()
-            logger.info(f"Google token response: {token_data}")
+            if "error" in token_data:
+                return Response({"error": token_data.get("error_description", "Token error")}, status=400)
 
-            if 'error' in token_data:
-                error_desc = token_data.get('error_description', 'Unknown error')
-                logger.error(f"Token exchange failed: {error_desc}")
-                return Response({"error": f"Token exchange failed: {error_desc}"}, status=status.HTTP_400_BAD_REQUEST)
-
-            access_token = token_data.get('access_token')
+            access_token = token_data.get("access_token")
             if not access_token:
-                return Response({"error": "No access token from Google"}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({"error": "Access token not received"}, status=400)
 
-            # Fetch user info
-            user_info_response = requests.get(
-                'https://www.googleapis.com/oauth2/v2/userinfo',
-                headers={'Authorization': f'Bearer {access_token}'},
+            # Step 2: User Info
+            user_info = requests.get(
+                "https://www.googleapis.com/oauth2/v2/userinfo",
+                headers={"Authorization": f"Bearer {access_token}"},
                 timeout=10
-            )
+            ).json()
 
-            if user_info_response.status_code != 200:
-                logger.error(f"User info failed: {user_info_response.text}")
-                return Response({"error": "Failed to fetch user info"}, status=status.HTTP_400_BAD_REQUEST)
-
-            user_info = user_info_response.json()
-            email = user_info.get('email')
+            email = user_info.get("email")
             if not email:
-                return Response({"error": "Email not provided by Google"}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({"error": "Email not received from Google"}, status=400)
 
-            # Create unique username
-            username_base = email.split('@')[0]
-            username = username_base
-            counter = 1
-            while User.objects.filter(username=username).exists():
-                username = f"{username_base}_{counter}"
-                counter += 1
-
-            # Create or update user
+            # Step 3: User Create/Login
             user, created = User.objects.get_or_create(
                 email=email,
                 defaults={
-                    'username': username,
-                    'full_name': user_info.get('name', ''),
-                    'is_email_verified': True,
-                    'is_active': True,
+                    "full_name": user_info.get("name", ""),
+                    "is_email_verified": True,
+                    "is_active": True,
                 }
             )
 
@@ -647,69 +639,72 @@ class GoogleCallbackView(APIView):
                 user.set_unusable_password()
                 user.save()
                 Profile.objects.create(user=user)
-                logger.info(f"New Google user created: {email}")
-            else:
-                user.is_active = True
-                user.is_email_verified = True
-                user.save()
-                Profile.objects.get_or_create(user=user)
-                logger.info(f"Existing Google user logged in: {email}")
 
-            # Generate JWT tokens
+            if not user.full_name and user_info.get("name"):
+                user.full_name = user_info.get("name")
+                user.save()
+
+            # Step 4: প্রোফাইল পিকচার (ডিফল্ট হলেও ওভাররাইড হবে!)
+            profile, _ = Profile.objects.get_or_create(user=user)
+
+            # শর্ত: যদি কোনো ছবি না থাকে বা ডিফল্ট ছবি থাকে → নতুন করে সেভ করো
+            if not profile.image.name or 'default' in profile.image.name.lower():
+                picture_saved = False
+
+                # ১. Google ছবি দিলে
+                if user_info.get("picture"):
+                    try:
+                        img_data = requests.get(user_info["picture"], timeout=10).content
+                        profile.image.save(f"google_{user.id}.jpg", ContentFile(img_data), save=True)
+                        picture_saved = True
+                    except Exception as e:
+                        logger.warning(f"Google picture failed: {e}")
+
+                # ২. Google না দিলে → Gravatar
+                if not picture_saved:
+                    email_hash = hashlib.md5(user.email.strip().lower().encode()).hexdigest()
+                    gravatar_url = f"https://www.gravatar.com/avatar/{email_hash}?s=200&d=identicon&r=g"
+                    try:
+                        img_data = requests.get(gravatar_url, timeout=10).content
+                        profile.image.save(f"gravatar_{user.id}.jpg", ContentFile(img_data), save=True)
+                    except Exception as e:
+                        logger.warning(f"Gravatar failed: {e}")
+
+            # Step 5: JWT Token
             refresh = RefreshToken.for_user(user)
             Token.objects.update_or_create(
                 user=user,
                 defaults={
-                    'email': user.email,
-                    'refresh_token': str(refresh),
-                    'access_token': str(refresh.access_token),
-                    'refresh_token_expires_at': timezone.now() + refresh.lifetime,
-                    'access_token_expires_at': timezone.now() + timedelta(minutes=15),
+                    "email": user.email,
+                    "refresh_token": str(refresh),
+                    "access_token": str(refresh.access_token),
+                    "refresh_token_expires_at": timezone.now() + timedelta(days=30),
+                    "access_token_expires_at": timezone.now() + timedelta(minutes=60),
                 }
             )
 
-            # Handle profile picture safely
-            profile = Profile.objects.get(user=user)
-            google_picture = user_info.get('picture')
-
-            if google_picture and not profile.image:
-                try:
-                    resp = requests.get(google_picture, timeout=5)
-                    if resp.status_code == 200:
-                        filename = f"{user.username}_google.jpg"
-                        profile.image.save(filename, ContentFile(resp.content), save=True)
-                        logger.info(f"Profile picture saved: {filename}")
-                except Exception as e:
-                    logger.warning(f"Could not download picture for {email}: {e}")
-
-            # নিরাপদ URL
-            profile_picture_url = (
-                request.build_absolute_uri(profile.image.url)
-                if profile.image and profile.image.name else None
-            )
-
+            # Final Response
             return Response({
+                "success": True,
                 "access_token": str(refresh.access_token),
-                "access_token_expires_in": 900,
                 "refresh_token": str(refresh),
-                "refresh_token_expires_in": int(refresh.lifetime.total_seconds()),
-                "token_type": "Bearer",
                 "user": {
                     "id": user.id,
                     "email": user.email,
-                    "full_name": user.full_name,
-                    "email_verified": user.is_email_verified,
+                    "full_name": user.full_name or "",
                     "role": getattr(user, "role", "user"),
-                    "profile_picture": profile_picture_url
+                    "profile_picture": request.build_absolute_uri(profile.image.url) if profile.image else None
                 }
-            }, status=status.HTTP_200_OK)
+            })
 
         except Exception as e:
-            logger.exception(f"CRITICAL ERROR in GoogleCallbackView: {type(e).__name__}: {e}")
-            return Response({"error": "Internal server error."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-
+            logger.error(f"Google login error: {e}")
+            import traceback
+            traceback.print_exc()
+            return Response({
+                "error": "Login failed",
+                "details": str(e)
+            }, status=500)
 
 
 class CustomAppleLogin(APIView):
