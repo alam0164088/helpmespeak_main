@@ -707,52 +707,55 @@ class GoogleCallbackView(APIView):
             }, status=500)
 
 
+
+
 class CustomAppleLogin(APIView):
     permission_classes = [AllowAny]
 
-    def get(self, request):
-        # Optional: শুধু test/redirect URL হ্যান্ডল করতে পারো
-        return Response({"message": "Apple login endpoint is active. Use POST with id_token."})
-
     def post(self, request):
         id_token = request.data.get("id_token")
-        email = request.data.get("email")
-        given_name = request.data.get("given_name", "")
-        family_name = request.data.get("family_name", "")
+        full_name = request.data.get("full_name", "")  # Flutter থেকে পাঠাও
 
         if not id_token:
-            return Response({"error": "id_token is required"}, status=400)
+            return Response({"error": "id_token required"}, status=400)
 
         try:
+            # ডেভেলপমেন্টে verify_signature=False রাখো
             decoded = jwt.decode(id_token, options={"verify_signature": False})
-            apple_user_id = decoded.get("sub")
-            if not apple_user_id:
-                return Response({"error": "Invalid Apple Token"}, status=400)
         except Exception as e:
-            return Response({"error": str(e)}, status=400)
+            return Response({"error": "Invalid token", "details": str(e)}, status=400)
 
-        # Create or update user
+        apple_id = decoded.get("sub")
+        email = decoded.get("email") or request.data.get("email")  # যদি না আসে, Flutter থেকে পাঠাবে
+
+        if not email:
+            email = f"{apple_id}@privaterelay.appleid.com"  # Apple Private Relay
+
+        # ইউজার তৈরি/লগইন
         user, created = User.objects.get_or_create(
             email=email,
             defaults={
-                "first_name": given_name,
-                "last_name": family_name,
-                "username": f"apple_{apple_user_id}",
+                "username": f"apple_{apple_id}",
+                "first_name": full_name.split()[0] if full_name else "",
+                "last_name": " ".join(full_name.split()[1:]) if full_name else "",
+                "is_active": True,
+                "is_email_verified": True,
             }
         )
+
+        if created:
+            user.set_unusable_password()
+            user.save()
 
         refresh = RefreshToken.for_user(user)
 
         return Response({
             "success": True,
+            "access_token": str(refresh.access_token),
+            "refresh_token": str(refresh),
             "user": {
                 "id": user.id,
                 "email": user.email,
-                "first_name": user.first_name,
-                "last_name": user.last_name,
-            },
-            "tokens": {
-                "refresh": str(refresh),
-                "access": str(refresh.access_token),
+                "name": full_name or f"Apple User {user.id}",
             }
         })
