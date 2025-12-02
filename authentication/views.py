@@ -714,24 +714,37 @@ class CustomAppleLogin(APIView):
 
     def post(self, request):
         id_token = request.data.get("id_token")
-        full_name = request.data.get("full_name", "")  # Flutter থেকে পাঠাও
+        full_name = request.data.get("full_name", "")
 
         if not id_token:
             return Response({"error": "id_token required"}, status=400)
 
         try:
-            # ডেভেলপমেন্টে verify_signature=False রাখো
-            decoded = jwt.decode(id_token, options={"verify_signature": False})
+            # Apple public key load
+            jwks_client = PyJWKClient(APPLE_KEYS_URL)
+            signing_key = jwks_client.get_signing_key_from_jwt(id_token).key
+
+            # Apple token verify
+            decoded = jwt.decode(
+                id_token,
+                signing_key,
+                algorithms=["RS256"],
+                audience=APPLE_CLIENT_ID,
+                issuer="https://appleid.apple.com"
+            )
+
         except Exception as e:
-            return Response({"error": "Invalid token", "details": str(e)}, status=400)
+            return Response({"error": "Invalid Apple token", "details": str(e)}, status=400)
 
+        # sub = unique apple id
         apple_id = decoded.get("sub")
-        email = decoded.get("email") or request.data.get("email")  # যদি না আসে, Flutter থেকে পাঠাবে
+        email = decoded.get("email") or request.data.get("email")
 
+        # Apple দ্বিতীয়বার email পাঠায় না → fallback
         if not email:
-            email = f"{apple_id}@privaterelay.appleid.com"  # Apple Private Relay
+            email = f"{apple_id}@privaterelay.appleid.com"
 
-        # ইউজার তৈরি/লগইন
+        # ইউজার তৈরি বা লগইন
         user, created = User.objects.get_or_create(
             email=email,
             defaults={
@@ -747,6 +760,7 @@ class CustomAppleLogin(APIView):
             user.set_unusable_password()
             user.save()
 
+        # JWT token
         refresh = RefreshToken.for_user(user)
 
         return Response({
