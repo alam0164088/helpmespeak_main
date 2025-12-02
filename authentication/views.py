@@ -708,14 +708,13 @@ class GoogleCallbackView(APIView):
 
 
 
-
-
 # views.py
-from dj_rest_auth.registration.views import SocialLoginView
-from allauth.socialaccount.providers.apple.views import AppleOAuth2Adapter
-from allauth.socialaccount.providers.apple.client import AppleOAuth2Client
-from allauth.socialaccount.providers.oauth2.client import OAuth2Client
+# authentication/views.py
+
+import jwt
+from authlib.jose import JsonWebKey
 from django.conf import settings
+from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
@@ -723,56 +722,58 @@ from django.contrib.auth import get_user_model
 User = get_user_model()
 
 
-class CustomAppleSocialLogin(SocialLoginView):
-    """
-    Use this when you're using allauth/dj-rest-auth SocialLogin flow from frontend.
-    Frontend should perform the Apple OAuth flow and send provider-specific data to backend.
-    """
-    adapter_class = AppleOAuth2Adapter
-    client_class = AppleOAuth2Client  # or OAuth2Client if you use a generic one
-    callback_url = settings.APPLE_CALLBACK_URL
+class CustomAppleLogin(APIView):
+    def post(self, request):
+        id_token = request.data.get('id_token')
+        first_name = request.data.get('first_name', '') or ''
+        last_name = request.data.get('last_name', '') or ''
 
-    def get_response(self):
-        """
-        This mirrors your CustomGoogleLogin.get_response() structure:
-        generate refresh/access tokens and return user profile fields.
-        """
-        response = super().get_response()
-        user = self.user
+        if not id_token:
+            return Response({"error": "id_token is required"}, status=400)
 
-        # create tokens
+        try:
+            jwks_client = JsonWebKey.fetch_key_set("https://appleid.apple.com/auth/keys")
+            unverified_header = jwt.get_unverified_header(id_token)
+            key = jwks_client.find_by_kid(unverified_header['kid'])
+
+            decoded = jwt.decode(
+                id_token,
+                key,
+                algorithms=["RS256"],
+                audience=settings.APPLE_CLIENT_ID,   # com.yourapp.web
+                issuer="https://appleid.apple.com"
+            )
+        except Exception as e:
+            return Response({
+                "error": "Invalid Apple token",
+                "details": str(e)
+            }, status=400)
+
+        apple_id = decoded['sub']
+        email = decoded.get('email')
+
+        user, created = User.objects.get_or_create(
+            username=apple_id,
+            defaults={
+                'email': email or f"{apple_id}@privaterelay.appleid.com",
+                'first_name': first_name,
+                'last_name': last_name,
+                'is_active': True
+            }
+        )
+
+        if created and not email:
+            user.email = f"{apple_id}@privaterelay.appleid.com"
+            user.save()
+
         refresh = RefreshToken.for_user(user)
-        access = refresh.access_token
 
-        user_data = {
+        return Response({
             "refresh": str(refresh),
-            "access": str(access),
-            "id": user.id,
-            "city": getattr(user, 'city', None),
-            "country": getattr(user, 'country', None),
-            "created_by": user.created_by.email if getattr(user, 'created_by', None) else None,
-            "updated_by": user.updated_by.email if getattr(user, 'updated_by', None) else None,
-            "last_login": user.last_login,
-            "full_name": getattr(user, 'full_name', "") or f"{user.first_name} {user.last_name}".strip(),
-            "first_name": user.first_name,
-            "last_name": user.last_name,
-            "username": user.username,
-            "email": user.email,
-            "gender": getattr(user, 'gender', None),
-            "primary_phone": getattr(user, 'primary_phone', None),
-            "secondary_phone": getattr(user, 'secondary_phone', None),
-            "user_type": getattr(user, 'user_type', None),
-            "date_of_birth": getattr(user, 'date_of_birth', None),
-            "is_active": user.is_active,
-            "is_admin": user.is_superuser,
-            "role": getattr(user, 'role', None),
-            "street_address_one": getattr(user, 'street_address_one', None),
-            "street_address_two": getattr(user, 'street_address_two', None),
-            "postal_code": getattr(user, 'postal_code', None),
-            "image": user.image.url if getattr(user, 'image', None) else None,
-            "nid": getattr(user, 'nid', None),
-            "created_at": getattr(user, 'created_at', None),
-            "updated_at": getattr(user, 'updated_at', None),
-        }
-
-        return Response(user_data)
+            "access": str(refresh.access_token),
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "name": user.get_full_name() or "User",
+            }
+        })
