@@ -709,8 +709,10 @@ class GoogleCallbackView(APIView):
 
 
 # authentication/views.py
+# authentication/views.py
 import jwt
 import requests
+from jwt.algorithms import RSAAlgorithm
 from django.conf import settings
 from django.views import View
 from django.http import JsonResponse
@@ -721,6 +723,39 @@ from django.contrib.auth import get_user_model
 import json
 
 User = get_user_model()
+
+def verify_apple_token(id_token):
+    """
+    Verify Apple id_token using Apple public keys
+    """
+    jwks_url = "https://appleid.apple.com/auth/keys"
+    try:
+        jwks = requests.get(jwks_url).json()
+    except Exception as e:
+        raise Exception(f"Failed to fetch Apple public keys: {e}")
+
+    unverified_header = jwt.get_unverified_header(id_token)
+    kid = unverified_header.get('kid')
+    if not kid:
+        raise Exception("Invalid token header: 'kid' not found")
+
+    key = None
+    for jwk in jwks.get('keys', []):
+        if jwk.get('kid') == kid:
+            key = RSAAlgorithm.from_jwk(jwk)
+            break
+
+    if not key:
+        raise Exception("Apple public key not found for given 'kid'")
+
+    decoded = jwt.decode(
+        id_token,
+        key=key,
+        algorithms=["RS256"],
+        audience=settings.APPLE_CLIENT_ID,  # অবশ্যই settings.py তে APPLE_CLIENT_ID সেট করতে হবে
+        issuer="https://appleid.apple.com"
+    )
+    return decoded
 
 @method_decorator(csrf_exempt, name='dispatch')
 class CustomAppleLogin(View):
@@ -735,19 +770,20 @@ class CustomAppleLogin(View):
             if not id_token:
                 return JsonResponse({"error": "id_token is required"}, status=400)
 
-            # Decode JWT without signature verification just to extract email & sub
+            # Verify token with Apple public key
             try:
-                decoded = jwt.decode(id_token, options={"verify_signature": False})
-                jwt_email = decoded.get('email')
+                decoded = verify_apple_token(id_token)
                 sub = decoded.get('sub')
+                jwt_email = decoded.get('email')
 
+                # যদি request body তে email না থাকে, token থেকে নাও
                 if not email and jwt_email:
                     email = jwt_email
                 if not email:
                     # fallback private relay email
                     email = f"{sub}@privaterelay.appleid.com"
-            except Exception:
-                return JsonResponse({"error": "Invalid id_token"}, status=400)
+            except Exception as e:
+                return JsonResponse({"error": "Invalid id_token", "details": str(e)}, status=400)
 
             # Get or create user
             user, created = User.objects.get_or_create(
