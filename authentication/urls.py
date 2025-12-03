@@ -53,7 +53,7 @@ urlpatterns = [
     path('auth/google/callback/', GoogleCallbackView.as_view(), name='google-callback'),
     
 
-    path("apple/login/", CustomAppleLogin.as_view(), name="apple_login"),
+   path('dj-rest-auth/apple/', CustomAppleLogin.as_view(), name='apple_login'),
 
 
 
