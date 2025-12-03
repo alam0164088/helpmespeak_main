@@ -757,11 +757,17 @@ def verify_apple_token(id_token):
     )
     return decoded
 
+
+
 @method_decorator(csrf_exempt, name='dispatch')
 class CustomAppleLogin(View):
     def post(self, request):
         try:
-            data = json.loads(request.body.decode('utf-8'))
+            try:
+                data = json.loads(request.body.decode('utf-8'))
+            except Exception:
+                return JsonResponse({"error": "Invalid JSON"}, status=400)
+
             id_token = data.get('id_token')
             given_name = data.get('first_name', '')
             family_name = data.get('last_name', '')
@@ -770,17 +776,15 @@ class CustomAppleLogin(View):
             if not id_token:
                 return JsonResponse({"error": "id_token is required"}, status=400)
 
-            # Verify token with Apple public key
+            # Verify Apple token
             try:
                 decoded = verify_apple_token(id_token)
                 sub = decoded.get('sub')
                 jwt_email = decoded.get('email')
 
-                # যদি request body তে email না থাকে, token থেকে নাও
                 if not email and jwt_email:
                     email = jwt_email
                 if not email:
-                    # fallback private relay email
                     email = f"{sub}@privaterelay.appleid.com"
             except Exception as e:
                 return JsonResponse({"error": "Invalid id_token", "details": str(e)}, status=400)
@@ -814,7 +818,5 @@ class CustomAppleLogin(View):
             }
             return JsonResponse(response_data, status=200)
 
-        except json.JSONDecodeError:
-            return JsonResponse({"error": "Invalid JSON"}, status=400)
         except Exception as e:
-            return JsonResponse({"error": f"Authentication failed: {str(e)}"}, status=500)
+            return JsonResponse({"error": f"Authentication failed", "details": str(e)}, status=500)
