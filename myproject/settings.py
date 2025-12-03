@@ -256,17 +256,5 @@ if DEBUG:
 # ------------------------------
 # Apple Private Key (from p.txt)
 # ------------------------------
-APPLE_PRIVATE_KEY_PATH = BASE_DIR / "p.txt"
-try:
-    with open(APPLE_PRIVATE_KEY_PATH, 'r') as f:
-        APPLE_PRIVATE_KEY = f.read().strip()
-    if DEBUG:
-        print("SUCCESS: Apple private key loaded from p.txt")
-except FileNotFoundError:
-    APPLE_PRIVATE_KEY = ""
-    if DEBUG:
-        print("ERROR: p.txt not found! Apple login will fail.")
-except Exception as e:
-    APPLE_PRIVATE_KEY = ""
-    if DEBUG:
-        print(f"ERROR: Failed to read p.txt: {e}")
+APPLE_PRIVATE_KEY = env("APPLE_PRIVATE_KEY", default="").replace("\\n", "\n")
+
