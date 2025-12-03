@@ -707,12 +707,9 @@ class GoogleCallbackView(APIView):
             }, status=500)
 
 
-
-# views.py
 # authentication/views.py
-
 import jwt
-from authlib.jose import JsonWebKey
+import requests
 from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -720,7 +717,6 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
-
 
 class CustomAppleLogin(APIView):
     def post(self, request):
@@ -732,15 +728,25 @@ class CustomAppleLogin(APIView):
             return Response({"error": "id_token is required"}, status=400)
 
         try:
-            jwks_client = JsonWebKey.fetch_key_set("https://appleid.apple.com/auth/keys")
+            # Apple JWKS fetch
+            jwks_url = "https://appleid.apple.com/auth/keys"
+            jwks = requests.get(jwks_url).json()
             unverified_header = jwt.get_unverified_header(id_token)
-            key = jwks_client.find_by_kid(unverified_header['kid'])
+
+            key = None
+            for jwk in jwks['keys']:
+                if jwk['kid'] == unverified_header['kid']:
+                    key = jwt.algorithms.RSAAlgorithm.from_jwk(jwk)
+                    break
+
+            if key is None:
+                raise Exception("Public key not found")
 
             decoded = jwt.decode(
                 id_token,
-                key,
+                key=key,
                 algorithms=["RS256"],
-                audience=settings.APPLE_CLIENT_ID,   # com.yourapp.web
+                audience=settings.APPLE_CLIENT_ID,
                 issuer="https://appleid.apple.com"
             )
         except Exception as e:
