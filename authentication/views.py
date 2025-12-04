@@ -707,6 +707,117 @@ class GoogleCallbackView(APIView):
             }, status=500)
 
 
+import json
+import requests
+from django.views import View
+from django.http import JsonResponse
+from django.contrib.auth import get_user_model
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
+from rest_framework_simplejwt.tokens import RefreshToken
+from django.conf import settings
+
+User = get_user_model()
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class GoogleLogin(View):
+    def post(self, request):
+        try:
+            data = json.loads(request.body)
+            code = data.get("code")  # Flutter থেকে authorization code
+            if not code:
+                return JsonResponse({"error": "Authorization code is required"}, status=400)
+
+            # -------------------------------
+            # Exchange code for tokens
+            # -------------------------------
+            token_url = "https://oauth2.googleapis.com/token"
+            payload = {
+                "code": code,
+                "client_id": settings.GOOGLE_CLIENT_ID,
+                "client_secret": settings.GOOGLE_CLIENT_SECRET,
+                "redirect_uri": settings.GOOGLE_REDIRECT_URI,
+                "grant_type": "authorization_code",
+            }
+
+            resp = requests.post(token_url, data=payload)
+            if resp.status_code != 200:
+                return JsonResponse({"error": "Failed to fetch token", "details": resp.text}, status=400)
+
+            tokens = resp.json()
+            id_token = tokens.get("id_token")
+
+            # -------------------------------
+            # Verify ID token
+            # -------------------------------
+            verify_url = f"https://oauth2.googleapis.com/tokeninfo?id_token={id_token}"
+            verify_resp = requests.get(verify_url)
+            if verify_resp.status_code != 200:
+                return JsonResponse({"error": "Invalid ID token"}, status=400)
+
+            user_info = verify_resp.json()
+            email = user_info.get("email")
+            full_name_from_google = user_info.get("name") or ""
+
+            # -------------------------------
+            # User create or get
+            # -------------------------------
+            try:
+                user = User.objects.get(email=email)
+                created = False
+            except User.DoesNotExist:
+                parts = full_name_from_google.split(" ", 1)
+                first_name = parts[0] if len(parts) > 0 else ""
+                last_name = parts[1] if len(parts) > 1 else ""
+
+                user = User.objects.create(
+                    username=email,
+                    email=email,
+                    first_name=first_name,
+                    last_name=last_name,
+                    is_active=True,
+                )
+                created = True
+
+            # Update name if needed
+            if full_name_from_google:
+                parts = full_name_from_google.split(" ", 1)
+                first_name = parts[0] if len(parts) > 0 else ""
+                last_name = parts[1] if len(parts) > 1 else ""
+                updated = False
+                if first_name and user.first_name != first_name:
+                    user.first_name = first_name
+                    updated = True
+                if last_name and user.last_name != last_name:
+                    user.last_name = last_name
+                    updated = True
+                if updated:
+                    user.save()
+
+            # Full name
+            full_name = f"{user.first_name} {user.last_name}".strip()
+
+            # JWT Tokens
+            refresh = RefreshToken.for_user(user)
+            access = refresh.access_token
+
+            return JsonResponse({
+                "success": True,
+                "created": created,
+                "refresh": str(refresh),
+                "access": str(access),
+                "user": {
+                    "id": user.id,
+                    "email": user.email,
+                    "full_name": full_name,
+                }
+            })
+
+        except Exception as e:
+            return JsonResponse({"error": "Google login failed", "details": str(e)}, status=500)
+
+
 
 
 import json
