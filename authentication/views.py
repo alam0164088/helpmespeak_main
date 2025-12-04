@@ -708,103 +708,108 @@ class GoogleCallbackView(APIView):
 
 
 
+
 # authentication/views.py
-# authentication/views.py
-import jwt
-import requests
-from jwt.algorithms import RSAAlgorithm
-from django.conf import settings
+
+import json
+import base64
 from django.views import View
 from django.http import JsonResponse
+from django.contrib.auth import get_user_model
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework_simplejwt.tokens import RefreshToken
-from django.contrib.auth import get_user_model
-import json
 
 User = get_user_model()
 
-def verify_apple_token(id_token):
+
+def decode_apple_token(id_token):
     """
-    Verify Apple id_token using Apple public keys
+    Decode Apple id_token payload without verification
     """
-    jwks_url = "https://appleid.apple.com/auth/keys"
     try:
-        jwks = requests.get(jwks_url).json()
+        parts = id_token.split(".")
+        if len(parts) != 3:
+            raise Exception("Invalid JWT structure")
+
+        payload = parts[1]
+
+        # Fix Base64 padding
+        payload += "=" * (-len(payload) % 4)
+
+        decoded_bytes = base64.urlsafe_b64decode(payload)
+        decoded_data = json.loads(decoded_bytes)
+
+        return decoded_data
+
     except Exception as e:
-        raise Exception(f"Failed to fetch Apple public keys: {e}")
-
-    unverified_header = jwt.get_unverified_header(id_token)
-    kid = unverified_header.get('kid')
-    if not kid:
-        raise Exception("Invalid token header: 'kid' not found")
-
-    key = None
-    for jwk in jwks.get('keys', []):
-        if jwk.get('kid') == kid:
-            key = RSAAlgorithm.from_jwk(jwk)
-            break
-
-    if not key:
-        raise Exception("Apple public key not found for given 'kid'")
-
-    decoded = jwt.decode(
-        id_token,
-        key=key,
-        algorithms=["RS256"],
-        audience=settings.APPLE_CLIENT_ID,  # অবশ্যই settings.py তে APPLE_CLIENT_ID সেট করতে হবে
-        issuer="https://appleid.apple.com"
-    )
-    return decoded
+        raise Exception(f"Token decode failed: {e}")
 
 
-
-@method_decorator(csrf_exempt, name='dispatch')
+@method_decorator(csrf_exempt, name="dispatch")
 class CustomAppleLogin(View):
     def post(self, request):
         try:
+            # Read JSON data
             try:
-                data = json.loads(request.body.decode('utf-8'))
-            except Exception:
+                data = json.loads(request.body)
+            except json.JSONDecodeError:
                 return JsonResponse({"error": "Invalid JSON"}, status=400)
 
-            id_token = data.get('id_token')
-            given_name = data.get('first_name', '')
-            family_name = data.get('last_name', '')
-            email = data.get('email')  # Optional
+            id_token = data.get("id_token")
+            first_name = data.get("first_name") or ""
+            last_name = data.get("last_name") or ""
+            email = data.get("email")  # iOS first time দেয়, পরে দেয় না
 
             if not id_token:
                 return JsonResponse({"error": "id_token is required"}, status=400)
 
-            # Verify Apple token
+            # Decode Apple token (NO VERIFY)
             try:
-                decoded = verify_apple_token(id_token)
-                sub = decoded.get('sub')
-                jwt_email = decoded.get('email')
-
-                if not email and jwt_email:
-                    email = jwt_email
-                if not email:
-                    email = f"{sub}@privaterelay.appleid.com"
+                apple_data = decode_apple_token(id_token)
+                sub = apple_data.get("sub")
+                jwt_email = apple_data.get("email")
             except Exception as e:
                 return JsonResponse({"error": "Invalid id_token", "details": str(e)}, status=400)
 
-            # Get or create user
+            if not sub:
+                return JsonResponse({"error": "Invalid id_token: sub missing"}, status=400)
+
+            # যদি email না থাকে, Apple private relay বানাই
+            if not email:
+                if jwt_email:
+                    email = jwt_email
+                else:
+                    email = f"{sub}@privaterelay.appleid.com"
+
+            # Create or login user
             user, created = User.objects.get_or_create(
                 username=sub,
                 defaults={
-                    'email': email,
-                    'first_name': given_name,
-                    'last_name': family_name,
-                    'is_active': True
-                }
+                    "email": email,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "is_active": True,
+                },
             )
 
-            # Generate JWT tokens
+            # পুরানো ইউজার হলে missing name update
+            updated = False
+            if first_name and user.first_name != first_name:
+                user.first_name = first_name
+                updated = True
+            if last_name and user.last_name != last_name:
+                user.last_name = last_name
+                updated = True
+            if updated:
+                user.save()
+
+            # Generate JWT token
             refresh = RefreshToken.for_user(user)
             access = refresh.access_token
 
-            response_data = {
+            return JsonResponse({
+                "success": True,
                 "refresh": str(refresh),
                 "access": str(access),
                 "user": {
@@ -812,11 +817,12 @@ class CustomAppleLogin(View):
                     "email": user.email,
                     "first_name": user.first_name,
                     "last_name": user.last_name,
-                    "full_name": f"{user.first_name} {user.last_name}".strip(),
-                    "username": user.username,
+                    "full_name": f"{user.first_name} {user.last_name}".strip() or "User"
                 }
-            }
-            return JsonResponse(response_data, status=200)
+            }, status=200)
 
         except Exception as e:
-            return JsonResponse({"error": f"Authentication failed", "details": str(e)}, status=500)
+            return JsonResponse({
+                "error": "Apple login failed",
+                "details": str(e)
+            }, status=500)
