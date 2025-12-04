@@ -729,7 +729,7 @@ class CustomAppleLogin(View):
             except:
                 return JsonResponse({"error": "Invalid JSON"}, status=400)
 
-            id_token = data.get("id_token")  # এটি যেকোনো string হবে
+            id_token = data.get("id_token")  
             first_name = data.get("first_name", "")
             last_name = data.get("last_name", "")
             email = data.get("email")
@@ -737,25 +737,27 @@ class CustomAppleLogin(View):
             if not id_token:
                 return JsonResponse({"error": "id_token is required"}, status=400)
 
-            # যেহেতু decode করবো না — সরাসরি user এর username হিসাবে use করবো
             sub = id_token.strip()
 
-            # email না থাকলে random/private mail বানাই
+            # যদি email না থাকে, তবে private mail generate করা
             if not email:
                 email = f"{sub}@privaterelay.appleid.com"
 
-            # Create or Get user
-            user, created = User.objects.get_or_create(
-                username=sub,
-                defaults={
-                    "email": email,
-                    "first_name": first_name,
-                    "last_name": last_name,
-                    "is_active": True,
-                },
-            )
+            # -------- EMAIL UNIQUE CHECK --------
+            try:
+                user = User.objects.get(email=email)
+                created = False
+            except User.DoesNotExist:
+                user = User.objects.create(
+                    username=sub,
+                    email=email,
+                    first_name=first_name,
+                    last_name=last_name,
+                    is_active=True,
+                )
+                created = True
 
-            # নাম update করা লাগলে
+            # Update names if needed
             updated = False
             if first_name and user.first_name != first_name:
                 user.first_name = first_name
@@ -766,12 +768,16 @@ class CustomAppleLogin(View):
             if updated:
                 user.save()
 
-            # Generate JWT for user
+            # FULL NAME
+            full_name = f"{user.first_name} {user.last_name}".strip()
+
+            # JWT Token generate
             refresh = RefreshToken.for_user(user)
             access = refresh.access_token
 
             return JsonResponse({
                 "success": True,
+                "created": created,
                 "refresh": str(refresh),
                 "access": str(access),
                 "user": {
@@ -779,6 +785,7 @@ class CustomAppleLogin(View):
                     "email": user.email,
                     "first_name": user.first_name,
                     "last_name": user.last_name,
+                    "full_name": full_name,
                 }
             }, status=200)
 
