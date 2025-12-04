@@ -809,8 +809,6 @@ class CustomAppleLogin(View):
                 "user": {
                     "id": user.id,
                     "email": user.email,
-                    "first_name": first_name,
-                    "last_name": last_name,
                     "full_name": full_name,
                 }
             }, status=200)
