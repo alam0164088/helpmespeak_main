@@ -710,7 +710,6 @@ class GoogleCallbackView(APIView):
 
 
 # authentication/views.py
-
 import json
 import base64
 from django.views import View
@@ -725,16 +724,16 @@ User = get_user_model()
 
 def decode_apple_token(id_token):
     """
-    Decode Apple id_token payload without verification
+    Decode only if JWT. Otherwise return None.
     """
     try:
         parts = id_token.split(".")
+
+        # Not a JWT → return None (we will treat as simple token)
         if len(parts) != 3:
-            raise Exception("Invalid JWT structure")
+            return None
 
         payload = parts[1]
-
-        # Fix Base64 padding
         payload += "=" * (-len(payload) % 4)
 
         decoded_bytes = base64.urlsafe_b64decode(payload)
@@ -742,47 +741,50 @@ def decode_apple_token(id_token):
 
         return decoded_data
 
-    except Exception as e:
-        raise Exception(f"Token decode failed: {e}")
+    except Exception:
+        return None  # Not decodable → treat as simple token
 
 
 @method_decorator(csrf_exempt, name="dispatch")
 class CustomAppleLogin(View):
     def post(self, request):
         try:
-            # Read JSON data
             try:
                 data = json.loads(request.body)
-            except json.JSONDecodeError:
+            except:
                 return JsonResponse({"error": "Invalid JSON"}, status=400)
 
             id_token = data.get("id_token")
             first_name = data.get("first_name") or ""
             last_name = data.get("last_name") or ""
-            email = data.get("email")  # iOS first time দেয়, পরে দেয় না
+            email = data.get("email")
 
             if not id_token:
                 return JsonResponse({"error": "id_token is required"}, status=400)
 
-            # Decode Apple token (NO VERIFY)
-            try:
-                apple_data = decode_apple_token(id_token)
+            # Try to decode if JWT
+            apple_data = decode_apple_token(id_token)
+
+            if apple_data:
+                # JWT Token
                 sub = apple_data.get("sub")
                 jwt_email = apple_data.get("email")
-            except Exception as e:
-                return JsonResponse({"error": "Invalid id_token", "details": str(e)}, status=400)
+            else:
+                # Non-JWT token → treat id_token itself as user unique ID
+                sub = id_token
+                jwt_email = None
 
             if not sub:
-                return JsonResponse({"error": "Invalid id_token: sub missing"}, status=400)
+                return JsonResponse({"error": "Invalid id_token (no sub)"}, status=400)
 
-            # যদি email না থাকে, Apple private relay বানাই
+            # Email resolve
             if not email:
                 if jwt_email:
                     email = jwt_email
                 else:
                     email = f"{sub}@privaterelay.appleid.com"
 
-            # Create or login user
+            # Create/Login user
             user, created = User.objects.get_or_create(
                 username=sub,
                 defaults={
@@ -793,7 +795,7 @@ class CustomAppleLogin(View):
                 },
             )
 
-            # পুরানো ইউজার হলে missing name update
+            # Update name if missing
             updated = False
             if first_name and user.first_name != first_name:
                 user.first_name = first_name
@@ -804,7 +806,7 @@ class CustomAppleLogin(View):
             if updated:
                 user.save()
 
-            # Generate JWT token
+            # Generate JWT
             refresh = RefreshToken.for_user(user)
             access = refresh.access_token
 
@@ -817,7 +819,7 @@ class CustomAppleLogin(View):
                     "email": user.email,
                     "first_name": user.first_name,
                     "last_name": user.last_name,
-                    "full_name": f"{user.first_name} {user.last_name}".strip() or "User"
+                    "full_name": f"{user.first_name} {user.last_name}".strip()
                 }
             }, status=200)
 
