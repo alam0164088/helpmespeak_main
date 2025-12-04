@@ -708,6 +708,7 @@ class GoogleCallbackView(APIView):
 
 
 
+
 import json
 from django.views import View
 from django.http import JsonResponse
@@ -723,15 +724,17 @@ User = get_user_model()
 class CustomAppleLogin(View):
     def post(self, request):
         try:
-            # Parse JSON
+            # ---------------------------
+            # Parse JSON safely
+            # ---------------------------
             try:
                 data = json.loads(request.body)
             except:
                 return JsonResponse({"error": "Invalid JSON"}, status=400)
 
-            id_token = data.get("id_token")  
-            first_name = data.get("first_name", "")
-            last_name = data.get("last_name", "")
+            id_token = data.get("id_token")
+            first_name = data.get("first_name") or ""
+            last_name = data.get("last_name") or ""
             email = data.get("email")
 
             if not id_token:
@@ -739,11 +742,15 @@ class CustomAppleLogin(View):
 
             sub = id_token.strip()
 
-            # যদি email না থাকে, তবে private mail generate করা
+            # ---------------------------
+            # Generate private email if missing
+            # ---------------------------
             if not email:
                 email = f"{sub}@privaterelay.appleid.com"
 
-            # -------- EMAIL UNIQUE CHECK --------
+            # ---------------------------
+            # Check if user exists
+            # ---------------------------
             try:
                 user = User.objects.get(email=email)
                 created = False
@@ -757,24 +764,43 @@ class CustomAppleLogin(View):
                 )
                 created = True
 
-            # Update names if needed
+            # ---------------------------
+            # Apple অনেক সময় নাম দেয় না → তখন আগেরটা রাখো
+            # ---------------------------
             updated = False
+
             if first_name and user.first_name != first_name:
                 user.first_name = first_name
                 updated = True
+
             if last_name and user.last_name != last_name:
                 user.last_name = last_name
                 updated = True
+
+            # যদি Apple নাম না দেয় → আগের নামই ব্যবহার করো
+            if not first_name:
+                first_name = user.first_name or ""
+
+            if not last_name:
+                last_name = user.last_name or ""
+
             if updated:
                 user.save()
 
-            # FULL NAME
-            full_name = f"{user.first_name} {user.last_name}".strip()
+            # ---------------------------
+            # FULL NAME always correct
+            # ---------------------------
+            full_name = f"{first_name} {last_name}".strip()
 
-            # JWT Token generate
+            # ---------------------------
+            # Generate JWT tokens
+            # ---------------------------
             refresh = RefreshToken.for_user(user)
             access = refresh.access_token
 
+            # ---------------------------
+            # Final Response
+            # ---------------------------
             return JsonResponse({
                 "success": True,
                 "created": created,
@@ -783,11 +809,14 @@ class CustomAppleLogin(View):
                 "user": {
                     "id": user.id,
                     "email": user.email,
-                    "first_name": user.first_name,
-                    "last_name": user.last_name,
+                    "first_name": first_name,
+                    "last_name": last_name,
                     "full_name": full_name,
                 }
             }, status=200)
 
         except Exception as e:
-            return JsonResponse({"error": "Apple login failed", "details": str(e)}, status=500)
+            return JsonResponse({
+                "error": "Apple login failed",
+                "details": str(e)
+            }, status=500)
