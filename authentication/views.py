@@ -719,6 +719,16 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 User = get_user_model()
 
+import json
+from django.views import View
+from django.http import JsonResponse
+from django.contrib.auth import get_user_model
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
+from rest_framework_simplejwt.tokens import RefreshToken
+
+User = get_user_model()
+
 
 @method_decorator(csrf_exempt, name="dispatch")
 class CustomAppleLogin(View):
@@ -733,9 +743,8 @@ class CustomAppleLogin(View):
                 return JsonResponse({"error": "Invalid JSON"}, status=400)
 
             id_token = data.get("id_token")
-            first_name = data.get("first_name") or ""
-            last_name = data.get("last_name") or ""
             email = data.get("email")
+            full_name_from_apple = data.get("full_name") or ""
 
             if not id_token:
                 return JsonResponse({"error": "id_token is required"}, status=400)
@@ -755,6 +764,11 @@ class CustomAppleLogin(View):
                 user = User.objects.get(email=email)
                 created = False
             except User.DoesNotExist:
+                # Split full_name into first & last
+                parts = full_name_from_apple.split(" ", 1)
+                first_name = parts[0] if len(parts) > 0 else ""
+                last_name = parts[1] if len(parts) > 1 else ""
+
                 user = User.objects.create(
                     username=sub,
                     email=email,
@@ -765,32 +779,27 @@ class CustomAppleLogin(View):
                 created = True
 
             # ---------------------------
-            # Apple অনেক সময় নাম দেয় না → তখন আগেরটা রাখো
+            # Update names if Apple sends new ones
             # ---------------------------
-            updated = False
+            if full_name_from_apple:
+                parts = full_name_from_apple.split(" ", 1)
+                first_name = parts[0] if len(parts) > 0 else ""
+                last_name = parts[1] if len(parts) > 1 else ""
 
-            if first_name and user.first_name != first_name:
-                user.first_name = first_name
-                updated = True
-
-            if last_name and user.last_name != last_name:
-                user.last_name = last_name
-                updated = True
-
-            # যদি Apple নাম না দেয় → আগের নামই ব্যবহার করো
-            if not first_name:
-                first_name = user.first_name or ""
-
-            if not last_name:
-                last_name = user.last_name or ""
-
-            if updated:
-                user.save()
+                updated = False
+                if first_name and user.first_name != first_name:
+                    user.first_name = first_name
+                    updated = True
+                if last_name and user.last_name != last_name:
+                    user.last_name = last_name
+                    updated = True
+                if updated:
+                    user.save()
 
             # ---------------------------
             # FULL NAME always correct
             # ---------------------------
-            full_name = f"{first_name} {last_name}".strip()
+            full_name = f"{user.first_name} {user.last_name}".strip()
 
             # ---------------------------
             # Generate JWT tokens
@@ -799,7 +808,7 @@ class CustomAppleLogin(View):
             access = refresh.access_token
 
             # ---------------------------
-            # Final Response
+            # Final Response (Full Name only)
             # ---------------------------
             return JsonResponse({
                 "success": True,
