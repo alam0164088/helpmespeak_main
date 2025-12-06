@@ -545,9 +545,8 @@ class MeView(APIView):
         return self.put(request)
 
 
-
-
-# views.py
+# views.py - Add this new view for ID Token authentication
+ 
 import json
 import requests
 from django.views import View
@@ -560,17 +559,18 @@ from django.conf import settings
 from django.core.files.base import ContentFile
 import hashlib
 import logging
-
+ 
 from .models import Profile, Token
-
+ 
 User = get_user_model()
 logger = logging.getLogger(__name__)
-
-
+ 
+ 
 @method_decorator(csrf_exempt, name="dispatch")
-class GoogleLogin(View):
+class GoogleIdTokenLogin(View):
     """
-    Flutter থেকে authorization code নিয়ে POST করবে → এখানে process হবে।
+    Flutter থেকে ID Token নিয়ে POST করবে → এখানে process হবে।
+    Mobile apps এর জন্য এটা সহজ এবং secure।
     """
     def post(self, request):
         try:
@@ -579,43 +579,35 @@ class GoogleLogin(View):
                 data = json.loads(request.body)
             except:
                 return JsonResponse({"error": "Invalid JSON"}, status=400)
-
-            code = data.get("code")
-            if not code:
-                return JsonResponse({"error": "Authorization code is required"}, status=400)
-
-            # ২. Exchange code for tokens
-            token_url = "https://oauth2.googleapis.com/token"
-            payload = {
-                "code": code,
-                "client_id": settings.GOOGLE_CLIENT_ID,
-                "client_secret": settings.GOOGLE_CLIENT_SECRET,
-                "redirect_uri": settings.GOOGLE_REDIRECT_URI,
-                "grant_type": "authorization_code",
-            }
-            resp = requests.post(token_url, data=payload, timeout=10)
-            if resp.status_code != 200:
-                return JsonResponse({"error": "Failed to fetch token", "details": resp.text}, status=400)
-
-            tokens = resp.json()
-            id_token = tokens.get("id_token")
-            access_token = tokens.get("access_token")
-            if not id_token or not access_token:
-                return JsonResponse({"error": "ID or Access token not received"}, status=400)
-
-            # ৩. Verify ID token
+ 
+            id_token = data.get("id_token")
+            if not id_token:
+                return JsonResponse({"error": "ID token is required"}, status=400)
+ 
+            # ২. Verify ID token directly with Google
             verify_url = f"https://oauth2.googleapis.com/tokeninfo?id_token={id_token}"
-            verify_resp = requests.get(verify_url)
+            verify_resp = requests.get(verify_url, timeout=10)
             if verify_resp.status_code != 200:
-                return JsonResponse({"error": "Invalid ID token"}, status=400)
-
+                return JsonResponse({
+                    "error": "Invalid ID token", 
+                    "details": verify_resp.text
+                }, status=400)
+ 
             user_info = verify_resp.json()
+            # ৩. Verify audience (client ID)
+            # iOS Client ID check
+            ios_client_id = "189239658265-r6gmo6bt7sor00m25832d64s2as2gof7.apps.googleusercontent.com"
+            if user_info.get("aud") != ios_client_id:
+                return JsonResponse({
+                    "error": "Invalid token audience"
+                }, status=400)
+ 
             email = user_info.get("email")
-            full_name_from_google = user_info.get("name") or ""
-
+            full_name_from_google = user_info.get("name", "")
+ 
             if not email:
                 return JsonResponse({"error": "Email not received from Google"}, status=400)
-
+ 
             # ৪. User create or get
             try:
                 user = User.objects.get(email=email)
@@ -635,7 +627,7 @@ class GoogleLogin(View):
                 user.save()
                 Profile.objects.create(user=user)
                 created = True
-
+ 
             # ৫. Update names if changed
             parts = full_name_from_google.split(" ", 1)
             first_name = parts[0] if len(parts) > 0 else ""
@@ -649,9 +641,9 @@ class GoogleLogin(View):
                 updated = True
             if updated:
                 user.save()
-
+ 
             full_name = f"{user.first_name} {user.last_name}".strip()
-
+ 
             # ৬. Profile picture handle
             profile, _ = Profile.objects.get_or_create(user=user)
             picture_saved = False
@@ -662,7 +654,7 @@ class GoogleLogin(View):
                     picture_saved = True
                 except Exception as e:
                     logger.warning(f"Google picture failed: {e}")
-
+ 
             if not picture_saved:
                 email_hash = hashlib.md5(user.email.strip().lower().encode()).hexdigest()
                 gravatar_url = f"https://www.gravatar.com/avatar/{email_hash}?s=200&d=identicon&r=g"
@@ -671,7 +663,7 @@ class GoogleLogin(View):
                     profile.image.save(f"gravatar_{user.id}.jpg", ContentFile(img_data), save=True)
                 except Exception as e:
                     logger.warning(f"Gravatar failed: {e}")
-
+ 
             # ৭. JWT Tokens
             refresh = RefreshToken.for_user(user)
             Token.objects.update_or_create(
@@ -682,7 +674,7 @@ class GoogleLogin(View):
                     "access_token": str(refresh.access_token),
                 }
             )
-
+ 
             # ৮. Final Response
             return JsonResponse({
                 "success": True,
@@ -696,23 +688,16 @@ class GoogleLogin(View):
                     "profile_picture": request.build_absolute_uri(profile.image.url) if profile.image else None
                 }
             })
-
+ 
         except Exception as e:
-            logger.error(f"Google login error: {e}", exc_info=True)
+            logger.error(f"Google ID Token login error: {e}", exc_info=True)
             return JsonResponse({"error": "Google login failed", "details": str(e)}, status=500)
+ 
+ 
+# urls.py - Add this URL pattern
+# path('auth/google/id-token/', GoogleIdTokenLogin.as_view(), name='google_id_token_login'),
 
 
-
-
-import json
-from django.views import View
-from django.http import JsonResponse
-from django.contrib.auth import get_user_model
-from django.utils.decorators import method_decorator
-from django.views.decorators.csrf import csrf_exempt
-from rest_framework_simplejwt.tokens import RefreshToken
-
-User = get_user_model()
 
 import json
 from django.views import View

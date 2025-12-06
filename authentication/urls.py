@@ -16,7 +16,7 @@ from .views import (
     Enable2FAView,
     Verify2FAView,
     MeView,
-   GoogleLogin,
+    GoogleIdTokenLogin
   # ← এটা আবার add করো
   
 
@@ -49,7 +49,7 @@ urlpatterns = [
     path('auth/me/', MeView.as_view(), name='me'),
 
     # Social logins
-    path('auth/google/', GoogleLogin.as_view(), name='google-login'),
+    path('auth/google/id-token/', GoogleIdTokenLogin.as_view(), name='google-id-token-login'),
 
     path('dj-rest-auth/apple/', CustomAppleLogin.as_view(), name='apple_login'),
 
