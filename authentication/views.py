@@ -548,28 +548,28 @@ class MeView(APIView):
 # views.py - Add this new view for ID Token authentication
 # views.py - এই দুটো ভিউ পুরোপুরি রিপ্লেস করো
 # views.py
-import json
-import time
-import requests
 import random
 import string
-import logging
-from django.views import View
-from django.http import JsonResponse
-from django.contrib.auth import get_user_model
-from django.utils.decorators import method_decorator
-from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
 from datetime import timedelta
 from django.core.files.base import ContentFile
 from rest_framework_simplejwt.tokens import RefreshToken
+from django.http import JsonResponse
+from django.views import View
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
+import json
+import requests
+import logging
+
+from django.contrib.auth import get_user_model
 from .models import Profile, Token
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
 def generate_unique_username(email):
-    """Generate a unique username based on email."""
+    """Generate a unique username based on email to avoid duplicates."""
     base = email.split("@")[0]
     while True:
         username = f"{base}_{''.join(random.choices(string.digits, k=4))}"
@@ -578,95 +578,81 @@ def generate_unique_username(email):
 
 @method_decorator(csrf_exempt, name="dispatch")
 class GoogleIdTokenLogin(View):
-    """
-    Flutter থেকে Google Sign-In এর id_token, email, full_name, photo_url পাঠাবে
-    আমরা শুধু বিশ্বাস করবো (no server-side verification)
-    """
+    """Google Sign-In without server-side verification (trusting Flutter client)."""
 
     def post(self, request):
         try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError:
+            return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+        email = data.get("email")
+        full_name = data.get("full_name", "").strip()
+        photo_url = data.get("photo_url")
+
+        if not email:
+            return JsonResponse({"error": "Email is required"}, status=400)
+
+        # Create or get user with unique username
+        user, created = User.objects.get_or_create(
+            email=email,
+            defaults={
+                "username": generate_unique_username(email),
+                "is_active": True,
+                "is_email_verified": True,
+            }
+        )
+
+        # Update name if blank
+        if full_name and (created or not user.full_name):
+            user.full_name = full_name
+            parts = full_name.split(" ", 1)
+            user.first_name = parts[0]
+            user.last_name = parts[1] if len(parts) > 1 else ""
+            user.save(update_fields=['full_name', 'first_name', 'last_name'])
+
+        # Handle profile image
+        profile, _ = Profile.objects.get_or_create(user=user)
+        if photo_url and (created or not profile.image or 'default' in str(profile.image)):
             try:
-                data = json.loads(request.body)
-            except:
-                return JsonResponse({"error": "Invalid JSON"}, status=400)
+                response = requests.get(photo_url, timeout=10)
+                if response.status_code == 200:
+                    ext = photo_url.split(".")[-1].split("?")[0]
+                    ext = ext if ext.lower() in ["jpg", "jpeg", "png", "webp", "gif"] else "jpg"
+                    filename = f"google_profile_{user.id}_{int(time.time())}.{ext}"
+                    profile.image.save(filename, ContentFile(response.content), save=False)
+                    profile.save(update_fields=['image'])
+            except Exception as e:
+                logger.warning(f"Google photo download failed for {email}: {str(e)}")
 
-            email = data.get("email")
-            full_name = data.get("full_name", "").strip()
-            photo_url = data.get("photo_url")
+        # JWT tokens
+        refresh = RefreshToken.for_user(user)
+        token_obj, _ = Token.objects.get_or_create(user=user)
+        token_obj.email = user.email
+        token_obj.refresh_token = str(refresh)
+        token_obj.access_token = str(refresh.access_token)
+        token_obj.refresh_token_expires_at = timezone.now() + refresh.lifetime
+        token_obj.access_token_expires_at = timezone.now() + timedelta(minutes=15)
+        token_obj.revoked = False
+        token_obj.save(update_fields=[
+            "email", "refresh_token", "access_token",
+            "refresh_token_expires_at", "access_token_expires_at", "revoked"
+        ])
 
-            if not email:
-                return JsonResponse({"error": "Email is required"}, status=400)
+        return JsonResponse({
+            "success": True,
+            "created": created,
+            "refresh": str(refresh),
+            "access": str(refresh.access_token),
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "full_name": user.full_name or full_name or "User",
+                "profile_image": profile.image.url if profile.image else None,
+            }
+        }, status=200)
 
-            # User get or create with unique username
-            user, created = User.objects.get_or_create(
-                email=email,
-                defaults={
-                    "username": generate_unique_username(email),
-                    "is_active": True,
-                    "is_email_verified": True,
-                }
-            )
 
-            # Update full_name if new user or blank
-            name_changed = False
-            if full_name and (created or not user.full_name):
-                user.full_name = full_name
-                parts = full_name.split(" ", 1)
-                user.first_name = parts[0]
-                user.last_name = parts[1] if len(parts) > 1 else ""
-                name_changed = True
-
-            # Profile image handling
-            profile, _ = Profile.objects.get_or_create(user=user)
-            image_changed = False
-            if photo_url and (created or not profile.image or 'default' in str(profile.image)):
-                try:
-                    response = requests.get(photo_url, timeout=10)
-                    if response.status_code == 200:
-                        ext = photo_url.split(".")[-1].split("?")[0]
-                        ext = ext if ext.lower() in ["jpg", "jpeg", "png", "webp", "gif"] else "jpg"
-                        filename = f"google_profile_{user.id}_{int(time.time())}.{ext}"
-                        profile.image.save(filename, ContentFile(response.content), save=False)
-                        image_changed = True
-                except Exception as e:
-                    logger.warning(f"Google photo download failed for {email}: {str(e)}")
-
-            # Save user and profile if changed
-            if name_changed:
-                user.save()
-            if image_changed:
-                profile.save()
-
-            # JWT token generation
-            refresh = RefreshToken.for_user(user)
-            token_obj, _ = Token.objects.get_or_create(user=user)
-            token_obj.email = user.email
-            token_obj.refresh_token = str(refresh)
-            token_obj.access_token = str(refresh.access_token)
-            token_obj.refresh_token_expires_at = timezone.now() + refresh.lifetime
-            token_obj.access_token_expires_at = timezone.now() + timedelta(minutes=15)
-            token_obj.revoked = False
-            token_obj.save(update_fields=[
-                "email", "refresh_token", "access_token",
-                "refresh_token_expires_at", "access_token_expires_at", "revoked"
-            ])
-
-            return JsonResponse({
-                "success": True,
-                "created": created,
-                "refresh": str(refresh),
-                "access": str(refresh.access_token),
-                "user": {
-                    "id": user.id,
-                    "email": user.email,
-                    "full_name": user.full_name or full_name or "User",
-                    "profile_image": profile.image.url if profile.image else None,
-                }
-            })
-
-        except Exception as e:
-            logger.error(f"Google login error: {str(e)}")
-            return JsonResponse({"error": "Google login failed"}, status=500)
 
 
 
