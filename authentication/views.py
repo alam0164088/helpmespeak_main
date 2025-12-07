@@ -547,10 +547,13 @@ class MeView(APIView):
 
 # views.py - Add this new view for ID Token authentication
 # views.py - এই দুটো ভিউ পুরোপুরি রিপ্লেস করো
-
+# views.py
 import json
 import time
 import requests
+import random
+import string
+import logging
 from django.views import View
 from django.http import JsonResponse
 from django.contrib.auth import get_user_model
@@ -562,9 +565,16 @@ from django.core.files.base import ContentFile
 from rest_framework_simplejwt.tokens import RefreshToken
 from .models import Profile, Token
 
-User = get_user_model()
 logger = logging.getLogger(__name__)
+User = get_user_model()
 
+def generate_unique_username(email):
+    """Generate a unique username based on email."""
+    base = email.split("@")[0]
+    while True:
+        username = f"{base}_{''.join(random.choices(string.digits, k=4))}"
+        if not User.objects.filter(username=username).exists():
+            return username
 
 @method_decorator(csrf_exempt, name="dispatch")
 class GoogleIdTokenLogin(View):
@@ -582,22 +592,22 @@ class GoogleIdTokenLogin(View):
 
             email = data.get("email")
             full_name = data.get("full_name", "").strip()
-            photo_url = data.get("photo_url")  # খুবই জরুরি!
+            photo_url = data.get("photo_url")
 
             if not email:
                 return JsonResponse({"error": "Email is required"}, status=400)
 
-            # User get or create
+            # User get or create with unique username
             user, created = User.objects.get_or_create(
                 email=email,
                 defaults={
-                    "username": email.split("@")[0],
+                    "username": generate_unique_username(email),
                     "is_active": True,
                     "is_email_verified": True,
                 }
             )
 
-            # নাম আপডেট (প্রথমবার বা খালি থাকলে)
+            # Update full_name if new user or blank
             name_changed = False
             if full_name and (created or not user.full_name):
                 user.full_name = full_name
@@ -606,10 +616,9 @@ class GoogleIdTokenLogin(View):
                 user.last_name = parts[1] if len(parts) > 1 else ""
                 name_changed = True
 
-            # প্রোফাইল পিকচার ডাউনলোড + সেভ
+            # Profile image handling
             profile, _ = Profile.objects.get_or_create(user=user)
             image_changed = False
-
             if photo_url and (created or not profile.image or 'default' in str(profile.image)):
                 try:
                     response = requests.get(photo_url, timeout=10)
@@ -622,24 +631,25 @@ class GoogleIdTokenLogin(View):
                 except Exception as e:
                     logger.warning(f"Google photo download failed for {email}: {str(e)}")
 
-            # সব একসাথে সেভ
+            # Save user and profile if changed
             if name_changed:
                 user.save()
             if image_changed:
                 profile.save()
 
-            # JWT টোকেন
+            # JWT token generation
             refresh = RefreshToken.for_user(user)
-            Token.objects.update_or_create(
-                user=user,
-                defaults={
-                    "email": user.email,
-                    "refresh_token": str(refresh),
-                    "access_token": str(refresh.access_token),
-                    "refresh_token_expires_at": timezone.now() + refresh.lifetime,
-                    "access_token_expires_at": timezone.now() + timedelta(minutes=15),
-                }
-            )
+            token_obj, _ = Token.objects.get_or_create(user=user)
+            token_obj.email = user.email
+            token_obj.refresh_token = str(refresh)
+            token_obj.access_token = str(refresh.access_token)
+            token_obj.refresh_token_expires_at = timezone.now() + refresh.lifetime
+            token_obj.access_token_expires_at = timezone.now() + timedelta(minutes=15)
+            token_obj.revoked = False
+            token_obj.save(update_fields=[
+                "email", "refresh_token", "access_token",
+                "refresh_token_expires_at", "access_token_expires_at", "revoked"
+            ])
 
             return JsonResponse({
                 "success": True,
@@ -657,9 +667,9 @@ class GoogleIdTokenLogin(View):
         except Exception as e:
             logger.error(f"Google login error: {str(e)}")
             return JsonResponse({"error": "Google login failed"}, status=500)
- 
-# urls.py - Add this URL pattern
-# path('auth/google/id-token/', GoogleIdTokenLogin.as_view(), name='google_id_token_login'),
+
+
+
 
 
 import json
