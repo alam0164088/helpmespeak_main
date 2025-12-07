@@ -546,152 +546,73 @@ class MeView(APIView):
 
 
 # views.py - Add this new view for ID Token authentication
- 
 import json
-import requests
 from django.views import View
 from django.http import JsonResponse
 from django.contrib.auth import get_user_model
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework_simplejwt.tokens import RefreshToken
-from django.conf import settings
-from django.core.files.base import ContentFile
-import hashlib
-import logging
- 
 from .models import Profile, Token
- 
+
 User = get_user_model()
-logger = logging.getLogger(__name__)
- 
- 
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class GoogleIdTokenLogin(View):
     """
-    Flutter থেকে ID Token নিয়ে POST করবে → এখানে process হবে।
-    Mobile apps এর জন্য এটা সহজ এবং secure।
+    Flutter থেকে id_token নিয়ে সরাসরি ইউজার তৈরি/লগইন করবে।
+    কোন Google verification করা হবে না।
     """
+
     def post(self, request):
         try:
-            # ১. Body parse
-            try:
-                data = json.loads(request.body)
-            except:
-                return JsonResponse({"error": "Invalid JSON"}, status=400)
- 
-            id_token = data.get("id_token")
-            if not id_token:
-                return JsonResponse({"error": "ID token is required"}, status=400)
- 
-            # ২. Verify ID token directly with Google
-            verify_url = f"https://oauth2.googleapis.com/tokeninfo?id_token={id_token}"
-            verify_resp = requests.get(verify_url, timeout=10)
-            if verify_resp.status_code != 200:
-                return JsonResponse({
-                    "error": "Invalid ID token", 
-                    "details": verify_resp.text
-                }, status=400)
- 
-            user_info = verify_resp.json()
-            # ৩. Verify audience (client ID)
-            # iOS Client ID check
-            ios_client_id = "189239658265-r6gmo6bt7sor00m25832d64s2as2gof7.apps.googleusercontent.com"
-            if user_info.get("aud") != ios_client_id:
-                return JsonResponse({
-                    "error": "Invalid token audience"
-                }, status=400)
- 
-            email = user_info.get("email")
-            full_name_from_google = user_info.get("name", "")
- 
-            if not email:
-                return JsonResponse({"error": "Email not received from Google"}, status=400)
- 
-            # ৪. User create or get
-            try:
-                user = User.objects.get(email=email)
-                created = False
-            except User.DoesNotExist:
-                parts = full_name_from_google.split(" ", 1)
-                first_name = parts[0] if len(parts) > 0 else ""
-                last_name = parts[1] if len(parts) > 1 else ""
-                user = User.objects.create(
-                    username=email,
-                    email=email,
-                    first_name=first_name,
-                    last_name=last_name,
-                    is_active=True
-                )
-                user.set_unusable_password()
-                user.save()
-                Profile.objects.create(user=user)
-                created = True
- 
-            # ৫. Update names if changed
-            parts = full_name_from_google.split(" ", 1)
-            first_name = parts[0] if len(parts) > 0 else ""
-            last_name = parts[1] if len(parts) > 1 else ""
-            updated = False
-            if first_name and user.first_name != first_name:
-                user.first_name = first_name
-                updated = True
-            if last_name and user.last_name != last_name:
-                user.last_name = last_name
-                updated = True
-            if updated:
-                user.save()
- 
-            full_name = f"{user.first_name} {user.last_name}".strip()
- 
-            # ৬. Profile picture handle
-            profile, _ = Profile.objects.get_or_create(user=user)
-            picture_saved = False
-            if user_info.get("picture"):
-                try:
-                    img_data = requests.get(user_info["picture"], timeout=10).content
-                    profile.image.save(f"google_{user.id}.jpg", ContentFile(img_data), save=True)
-                    picture_saved = True
-                except Exception as e:
-                    logger.warning(f"Google picture failed: {e}")
- 
-            if not picture_saved:
-                email_hash = hashlib.md5(user.email.strip().lower().encode()).hexdigest()
-                gravatar_url = f"https://www.gravatar.com/avatar/{email_hash}?s=200&d=identicon&r=g"
-                try:
-                    img_data = requests.get(gravatar_url, timeout=10).content
-                    profile.image.save(f"gravatar_{user.id}.jpg", ContentFile(img_data), save=True)
-                except Exception as e:
-                    logger.warning(f"Gravatar failed: {e}")
- 
-            # ৭. JWT Tokens
-            refresh = RefreshToken.for_user(user)
-            Token.objects.update_or_create(
-                user=user,
-                defaults={
-                    "email": user.email,
-                    "refresh_token": str(refresh),
-                    "access_token": str(refresh.access_token),
-                }
-            )
- 
-            # ৮. Final Response
-            return JsonResponse({
-                "success": True,
-                "created": created,
-                "refresh": str(refresh),
-                "access": str(refresh.access_token),
-                "user": {
-                    "id": user.id,
-                    "email": user.email,
-                    "full_name": full_name,
-                    "profile_picture": request.build_absolute_uri(profile.image.url) if profile.image else None
-                }
-            })
- 
-        except Exception as e:
-            logger.error(f"Google ID Token login error: {e}", exc_info=True)
-            return JsonResponse({"error": "Google login failed", "details": str(e)}, status=500)
+            data = json.loads(request.body)
+        except Exception:
+            return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+        # Flutter থেকে আসা id_token ব্যবহার (যা আসলে Google token)
+        id_token = data.get("id_token")
+        email = data.get("email")  # Flutter থেকে email আশা করা হচ্ছে
+        full_name = data.get("full_name", "")
+
+        if not email:
+            return JsonResponse({"error": "Email is required"}, status=400)
+
+        # ইউজার তৈরি বা get
+        user, created = User.objects.get_or_create(
+            email=email,
+            defaults={
+                "username": email,
+                "first_name": full_name.split(" ")[0] if full_name else "",
+                "last_name": " ".join(full_name.split(" ")[1:]) if full_name else "",
+                "is_active": True
+            }
+        )
+
+        # JWT তৈরি
+        refresh = RefreshToken.for_user(user)
+        Token.objects.update_or_create(
+            user=user,
+            defaults={
+                "email": user.email,
+                "refresh_token": str(refresh),
+                "access_token": str(refresh.access_token),
+            }
+        )
+
+        return JsonResponse({
+            "success": True,
+            "created": created,
+            "refresh": str(refresh),
+            "access": str(refresh.access_token),
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "full_name": f"{user.first_name} {user.last_name}".strip()
+            }
+        })
+
  
  
 # urls.py - Add this URL pattern
