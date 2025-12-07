@@ -123,11 +123,11 @@ class Profile(models.Model):
         return f"Profile for {self.user.email}"
 
     def save(self, *args, **kwargs):
+        # যদি employee_id না থাকে, generate unique ID
         if not self.employee_id:
-            last_count = Profile.objects.count() + 1
-            self.employee_id = f"EMP{last_count:03d}"
+            # Option 1: UUID-based
+            self.employee_id = f"EMP{uuid.uuid4().hex[:8].upper()}"
         super().save(*args, **kwargs)
-
 
 from django.db import models
 from django.contrib.auth import get_user_model
