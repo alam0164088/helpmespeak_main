@@ -546,74 +546,117 @@ class MeView(APIView):
 
 
 # views.py - Add this new view for ID Token authentication
+# views.py - এই দুটো ভিউ পুরোপুরি রিপ্লেস করো
+
 import json
+import time
+import requests
 from django.views import View
 from django.http import JsonResponse
 from django.contrib.auth import get_user_model
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
+from django.utils import timezone
+from datetime import timedelta
+from django.core.files.base import ContentFile
 from rest_framework_simplejwt.tokens import RefreshToken
 from .models import Profile, Token
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 
 @method_decorator(csrf_exempt, name="dispatch")
 class GoogleIdTokenLogin(View):
     """
-    Flutter থেকে id_token নিয়ে সরাসরি ইউজার তৈরি/লগইন করবে।
-    কোন Google verification করা হবে না।
+    Flutter থেকে Google Sign-In এর id_token, email, full_name, photo_url পাঠাবে
+    আমরা শুধু বিশ্বাস করবো (no server-side verification)
     """
 
     def post(self, request):
         try:
-            data = json.loads(request.body)
-        except Exception:
-            return JsonResponse({"error": "Invalid JSON"}, status=400)
+            try:
+                data = json.loads(request.body)
+            except:
+                return JsonResponse({"error": "Invalid JSON"}, status=400)
 
-        # Flutter থেকে আসা id_token ব্যবহার (যা আসলে Google token)
-        id_token = data.get("id_token")
-        email = data.get("email")  # Flutter থেকে email আশা করা হচ্ছে
-        full_name = data.get("full_name", "")
+            email = data.get("email")
+            full_name = data.get("full_name", "").strip()
+            photo_url = data.get("photo_url")  # খুবই জরুরি!
 
-        if not email:
-            return JsonResponse({"error": "Email is required"}, status=400)
+            if not email:
+                return JsonResponse({"error": "Email is required"}, status=400)
 
-        # ইউজার তৈরি বা get
-        user, created = User.objects.get_or_create(
-            email=email,
-            defaults={
-                "username": email,
-                "first_name": full_name.split(" ")[0] if full_name else "",
-                "last_name": " ".join(full_name.split(" ")[1:]) if full_name else "",
-                "is_active": True
-            }
-        )
+            # User get or create
+            user, created = User.objects.get_or_create(
+                email=email,
+                defaults={
+                    "username": email.split("@")[0],
+                    "is_active": True,
+                    "is_email_verified": True,
+                }
+            )
 
-        # JWT তৈরি
-        refresh = RefreshToken.for_user(user)
-        Token.objects.update_or_create(
-            user=user,
-            defaults={
-                "email": user.email,
-                "refresh_token": str(refresh),
-                "access_token": str(refresh.access_token),
-            }
-        )
+            # নাম আপডেট (প্রথমবার বা খালি থাকলে)
+            name_changed = False
+            if full_name and (created or not user.full_name):
+                user.full_name = full_name
+                parts = full_name.split(" ", 1)
+                user.first_name = parts[0]
+                user.last_name = parts[1] if len(parts) > 1 else ""
+                name_changed = True
 
-        return JsonResponse({
-            "success": True,
-            "created": created,
-            "refresh": str(refresh),
-            "access": str(refresh.access_token),
-            "user": {
-                "id": user.id,
-                "email": user.email,
-                "full_name": f"{user.first_name} {user.last_name}".strip()
-            }
-        })
+            # প্রোফাইল পিকচার ডাউনলোড + সেভ
+            profile, _ = Profile.objects.get_or_create(user=user)
+            image_changed = False
 
- 
+            if photo_url and (created or not profile.image or 'default' in str(profile.image)):
+                try:
+                    response = requests.get(photo_url, timeout=10)
+                    if response.status_code == 200:
+                        ext = photo_url.split(".")[-1].split("?")[0]
+                        ext = ext if ext.lower() in ["jpg", "jpeg", "png", "webp", "gif"] else "jpg"
+                        filename = f"google_profile_{user.id}_{int(time.time())}.{ext}"
+                        profile.image.save(filename, ContentFile(response.content), save=False)
+                        image_changed = True
+                except Exception as e:
+                    logger.warning(f"Google photo download failed for {email}: {str(e)}")
+
+            # সব একসাথে সেভ
+            if name_changed:
+                user.save()
+            if image_changed:
+                profile.save()
+
+            # JWT টোকেন
+            refresh = RefreshToken.for_user(user)
+            Token.objects.update_or_create(
+                user=user,
+                defaults={
+                    "email": user.email,
+                    "refresh_token": str(refresh),
+                    "access_token": str(refresh.access_token),
+                    "refresh_token_expires_at": timezone.now() + refresh.lifetime,
+                    "access_token_expires_at": timezone.now() + timedelta(minutes=15),
+                }
+            )
+
+            return JsonResponse({
+                "success": True,
+                "created": created,
+                "refresh": str(refresh),
+                "access": str(refresh.access_token),
+                "user": {
+                    "id": user.id,
+                    "email": user.email,
+                    "full_name": user.full_name or full_name or "User",
+                    "profile_image": profile.image.url if profile.image else None,
+                }
+            })
+
+        except Exception as e:
+            logger.error(f"Google login error: {str(e)}")
+            return JsonResponse({"error": "Google login failed"}, status=500)
  
 # urls.py - Add this URL pattern
 # path('auth/google/id-token/', GoogleIdTokenLogin.as_view(), name='google_id_token_login'),
@@ -630,14 +673,14 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 User = get_user_model()
 
-
 @method_decorator(csrf_exempt, name="dispatch")
 class CustomAppleLogin(View):
+    """
+    Apple Sign In - Flutter থেকে id_token, email, full_name পাঠাবে
+    """
+
     def post(self, request):
         try:
-            # ---------------------------
-            # Parse JSON safely
-            # ---------------------------
             try:
                 data = json.loads(request.body)
             except:
@@ -645,86 +688,77 @@ class CustomAppleLogin(View):
 
             id_token = data.get("id_token")
             email = data.get("email")
-            full_name_from_apple = data.get("full_name") or ""
+            full_name = data.get("full_name", "").strip()
+            photo_url = data.get("photo_url")  # Optional (Apple দেয় না, কিন্তু তুমি দিতে পারো)
 
             if not id_token:
                 return JsonResponse({"error": "id_token is required"}, status=400)
 
             sub = id_token.strip()
-
-            # ---------------------------
-            # Generate private email if missing
-            # ---------------------------
             if not email:
                 email = f"{sub}@privaterelay.appleid.com"
 
-            # ---------------------------
-            # Check if user exists
-            # ---------------------------
-            try:
-                user = User.objects.get(email=email)
-                created = False
-            except User.DoesNotExist:
-                # Split full_name into first & last
-                parts = full_name_from_apple.split(" ", 1)
-                first_name = parts[0] if len(parts) > 0 else ""
-                last_name = parts[1] if len(parts) > 1 else ""
+            # User get or create
+            user, created = User.objects.get_or_create(
+                email=email,
+                defaults={
+                    "username": sub,
+                    "is_active": True,
+                    "is_email_verified": True,
+                }
+            )
 
-                user = User.objects.create(
-                    username=sub,
-                    email=email,
-                    first_name=first_name,
-                    last_name=last_name,
-                    is_active=True,
-                )
-                created = True
+            # নাম আপডেট (Apple শুধু প্রথমবার দেয়)
+            name_changed = False
+            if full_name and (created or not user.full_name):
+                user.full_name = full_name
+                parts = full_name.split(" ", 1)
+                user.first_name = parts[0]
+                user.last_name = parts[1] if len(parts) > 1 else ""
+                name_changed = True
 
-            # ---------------------------
-            # Update names if Apple sends new ones
-            # ---------------------------
-            if full_name_from_apple:
-                parts = full_name_from_apple.split(" ", 1)
-                first_name = parts[0] if len(parts) > 0 else ""
-                last_name = parts[1] if len(parts) > 1 else ""
+            # প্রোফাইল পিকচার (যদি তুমি পাঠাও)
+            profile, _ = Profile.objects.get_or_create(user=user)
+            image_changed = False
+            if photo_url and (created or not profile.image or 'default' in str(profile.image)):
+                try:
+                    resp = requests.get(photo_url, timeout=10)
+                    if resp.status_code == 200:
+                        filename = f"apple_profile_{user.id}_{int(time.time())}.jpg"
+                        profile.image.save(filename, ContentFile(resp.content), save=False)
+                        image_changed = True
+                except Exception as e:
+                    logger.warning(f"Apple photo download failed: {e}")
 
-                updated = False
-                if first_name and user.first_name != first_name:
-                    user.first_name = first_name
-                    updated = True
-                if last_name and user.last_name != last_name:
-                    user.last_name = last_name
-                    updated = True
-                if updated:
-                    user.save()
+            if name_changed:
+                user.save()
+            if image_changed:
+                profile.save()
 
-            # ---------------------------
-            # FULL NAME always correct
-            # ---------------------------
-            full_name = f"{user.first_name} {user.last_name}".strip()
-
-            # ---------------------------
-            # Generate JWT tokens
-            # ---------------------------
+            # JWT টোকেন
             refresh = RefreshToken.for_user(user)
-            access = refresh.access_token
+            Token.objects.update_or_create(
+                user=user,
+                defaults={
+                    "email": user.email,
+                    "refresh_token": str(refresh),
+                    "access_token": str(refresh.access_token),
+                }
+            )
 
-            # ---------------------------
-            # Final Response (Full Name only)
-            # ---------------------------
             return JsonResponse({
                 "success": True,
                 "created": created,
                 "refresh": str(refresh),
-                "access": str(access),
+                "access": str(refresh.access_token),
                 "user": {
                     "id": user.id,
                     "email": user.email,
-                    "full_name": full_name,
+                    "full_name": user.full_name or full_name or "Apple User",
+                    "profile_image": profile.image.url if profile.image else None,
                 }
-            }, status=200)
+            })
 
         except Exception as e:
-            return JsonResponse({
-                "error": "Apple login failed",
-                "details": str(e)
-            }, status=500)
+            logger.error(f"Apple login error: {str(e)}")
+            return JsonResponse({"error": "Apple login failed"}, status=500)
