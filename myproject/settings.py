@@ -180,7 +180,7 @@ EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD")
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="no-reply@helpmespeak.app")
 
 
-
+# 
 # ------------------------------
 # CORS
 # ------------------------------
