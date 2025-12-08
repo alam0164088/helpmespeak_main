@@ -269,7 +269,7 @@ class VerifyOTPView(APIView):
                 return Response({"detail": "OTP expired or invalid."}, status=status.HTTP_400_BAD_REQUEST)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-
+# 
 class LoginView(APIView):
     permission_classes = [AllowAny]
 
