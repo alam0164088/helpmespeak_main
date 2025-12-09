@@ -174,7 +174,13 @@ class TranslateAndTTSAPIView(APIView):
             response.raise_for_status()
             result = response.json()
             translated_text = result["data"]["translations"][0]["translatedText"]
+
+            # 🔥 এখানে HTML entity decode করবে
+            import html
+            translated_text = html.unescape(translated_text)
+
             logger.info(f"Translated text: {translated_text}")
+
         except Exception as e:
             logger.error(f"Translation failed: {str(e)}")
             return Response({"error": f"Translation failed: {str(e)}"}, status=500)
