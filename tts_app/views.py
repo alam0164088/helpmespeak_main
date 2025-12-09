@@ -173,13 +173,19 @@ class TranslateAndTTSAPIView(APIView):
             response = requests.post(f"{API_URL}?key={API_KEY}", json=payload, headers=headers)
             response.raise_for_status()
             result = response.json()
+            result = response.json()
             translated_text = result["data"]["translations"][0]["translatedText"]
 
             # 🔥 এখানে HTML entity decode করবে
             import html
             translated_text = html.unescape(translated_text)
 
+            # 🔥 এখানে সব ধরনের কোটেশন রিমুভ করবে
+            for q in ['"', '“', '”', '‟', '„']:
+                translated_text = translated_text.replace(q, '')
+
             logger.info(f"Translated text: {translated_text}")
+
 
         except Exception as e:
             logger.error(f"Translation failed: {str(e)}")
