@@ -111,23 +111,46 @@ class PasswordResetSession(models.Model):
 
 # 
 
+import uuid
+from django.db import models
+from django.conf import settings
+
+User = settings.AUTH_USER_MODEL
+
+
 class Profile(models.Model):
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
-    employee_id = models.CharField(max_length=20, unique=True, blank=True)
-    phone = models.CharField(max_length=20, blank=True)
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='profile'
+    )
+    employee_id = models.CharField(
+        max_length=20,
+        unique=True,
+        blank=True
+    )
+    phone = models.CharField(
+        max_length=20,
+        blank=True
+    )
+    image = models.ImageField(
+        upload_to='profile_images/',
+        default='profile_images/default_profile.png'
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    image = models.ImageField(upload_to='profile_images/', default='profile_images/default_profile.png')
 
     def __str__(self):
-        return f"Profile for {self.user.email}"
+        return f"Profile of {self.user.email}"
 
     def save(self, *args, **kwargs):
-        # যদি employee_id না থাকে, generate unique ID
+        # নতুন প্রোফাইল হলে employee_id সেট করো
         if not self.employee_id:
-            # Option 1: UUID-based
-            self.employee_id = f"EMP{uuid.uuid4().hex[:8].upper()}"
+            unique_id = uuid.uuid4().hex[:8].upper()
+            self.employee_id = f"EMP{unique_id}"
+
         super().save(*args, **kwargs)
+
 
 from django.db import models
 from django.contrib.auth import get_user_model
