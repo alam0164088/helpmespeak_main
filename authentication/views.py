@@ -530,60 +530,71 @@ class MeView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def put(self, request):
-        profile, created = Profile.objects.get_or_create(user=request.user)
-        serializer = ProfileUpdateSerializer(profile, data=request.data, context={'request': request}, partial=True)
-        if serializer.is_valid():
-            serializer.save()
-            logger.info(f"Profile updated for user: {request.user.email}")
-            return Response({
-                "message": "Profile updated successfully.",
-                "user": UserProfileSerializer(request.user, context={'request': request}).data
-            }, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            profile, created = Profile.objects.get_or_create(user=request.user)
+
+            serializer = ProfileUpdateSerializer(
+                profile,
+                data=request.data,
+                partial=True,
+                context={'request': request}
+            )
+
+            if serializer.is_valid():
+                serializer.save()
+
+                return Response({
+                    "message": "Profile updated successfully",
+                    "user": UserProfileSerializer(request.user, context={'request': request}).data
+                }, status=status.HTTP_200_OK)
+
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     def patch(self, request):
         return self.put(request)
 
 
-# views.py - Add this new view for ID Token authentication
-# views.py - এই দুটো ভিউ পুরোপুরি রিপ্লেস করো
-# views.py
 import random
 import string
+import time
+import logging
+import json
+import requests
+
 from django.utils import timezone
 from datetime import timedelta
 from django.core.files.base import ContentFile
-from rest_framework_simplejwt.tokens import RefreshToken
-from django.http import JsonResponse
 from django.views import View
+from django.http import JsonResponse
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
-import json
-import requests
-import logging
-
+from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
+
 from .models import Profile, Token
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
+
 def generate_unique_username(email):
-    """Generate a unique username based on email to avoid duplicates."""
     base = email.split("@")[0]
     while True:
         username = f"{base}_{''.join(random.choices(string.digits, k=4))}"
         if not User.objects.filter(username=username).exists():
             return username
 
+
 @method_decorator(csrf_exempt, name="dispatch")
 class GoogleIdTokenLogin(View):
-    """Google Sign-In without server-side verification (trusting Flutter client)."""
 
     def post(self, request):
         try:
             data = json.loads(request.body)
-        except json.JSONDecodeError:
+        except:
             return JsonResponse({"error": "Invalid JSON"}, status=400)
 
         email = data.get("email")
@@ -593,7 +604,7 @@ class GoogleIdTokenLogin(View):
         if not email:
             return JsonResponse({"error": "Email is required"}, status=400)
 
-        # Create or get user with unique username
+        # User create/get
         user, created = User.objects.get_or_create(
             email=email,
             defaults={
@@ -603,29 +614,30 @@ class GoogleIdTokenLogin(View):
             }
         )
 
-        # Update name if blank
-        if full_name and (created or not user.full_name):
-            user.full_name = full_name
+        # Update name
+        if full_name:
             parts = full_name.split(" ", 1)
             user.first_name = parts[0]
             user.last_name = parts[1] if len(parts) > 1 else ""
-            user.save(update_fields=['full_name', 'first_name', 'last_name'])
+            user.save()
 
-        # Handle profile image
+        # Profile
         profile, _ = Profile.objects.get_or_create(user=user)
-        if photo_url and (created or not profile.image or 'default' in str(profile.image)):
-            try:
-                response = requests.get(photo_url, timeout=10)
-                if response.status_code == 200:
-                    ext = photo_url.split(".")[-1].split("?")[0]
-                    ext = ext if ext.lower() in ["jpg", "jpeg", "png", "webp", "gif"] else "jpg"
-                    filename = f"google_profile_{user.id}_{int(time.time())}.{ext}"
-                    profile.image.save(filename, ContentFile(response.content), save=False)
-                    profile.save(update_fields=['image'])
-            except Exception as e:
-                logger.warning(f"Google photo download failed for {email}: {str(e)}")
 
-        # JWT tokens
+        # Download profile photo
+        if photo_url:
+            try:
+                res = requests.get(photo_url, timeout=10)
+                if res.status_code == 200:
+                    ext = photo_url.split(".")[-1].split("?")[0]
+                    ext = ext if ext.lower() in ["jpg", "jpeg", "png"] else "jpg"
+                    filename = f"google_{user.id}_{int(time.time())}.{ext}"
+                    profile.image.save(filename, ContentFile(res.content), save=False)
+                    profile.save()
+            except Exception as e:
+                logger.warning(f"Profile download failed: {e}")
+
+        # Tokens
         refresh = RefreshToken.for_user(user)
         token_obj, _ = Token.objects.get_or_create(user=user)
         token_obj.email = user.email
@@ -634,10 +646,7 @@ class GoogleIdTokenLogin(View):
         token_obj.refresh_token_expires_at = timezone.now() + refresh.lifetime
         token_obj.access_token_expires_at = timezone.now() + timedelta(minutes=15)
         token_obj.revoked = False
-        token_obj.save(update_fields=[
-            "email", "refresh_token", "access_token",
-            "refresh_token_expires_at", "access_token_expires_at", "revoked"
-        ])
+        token_obj.save()
 
         return JsonResponse({
             "success": True,
@@ -647,13 +656,10 @@ class GoogleIdTokenLogin(View):
             "user": {
                 "id": user.id,
                 "email": user.email,
-                "full_name": user.full_name or full_name or "User",
+                "full_name": f"{user.first_name} {user.last_name}".strip(),
                 "profile_image": profile.image.url if profile.image else None,
             }
         }, status=200)
-
-
-
 
 
 
@@ -665,17 +671,22 @@ from django.contrib.auth import get_user_model
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework_simplejwt.tokens import RefreshToken
+from .models import Profile, Token
+from django.utils import timezone
+from datetime import timedelta
 
 User = get_user_model()
 
 
+def random_username():
+    return "apple_" + "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class CustomAppleLogin(View):
+
     def post(self, request):
         try:
-            # ---------------------------
-            # Parse JSON safely
-            # ---------------------------
             try:
                 data = json.loads(request.body)
             except:
@@ -683,33 +694,28 @@ class CustomAppleLogin(View):
 
             id_token = data.get("id_token")
             email = data.get("email")
-            full_name_from_apple = data.get("full_name") or ""
+            full_name_raw = data.get("full_name") or ""
 
             if not id_token:
                 return JsonResponse({"error": "id_token is required"}, status=400)
 
             sub = id_token.strip()
 
-            # ---------------------------
-            # Generate private email if missing
-            # ---------------------------
+            # Email fallback
             if not email:
                 email = f"{sub}@privaterelay.appleid.com"
 
-            # ---------------------------
-            # Check if user exists
-            # ---------------------------
+            # User create/get
             try:
                 user = User.objects.get(email=email)
                 created = False
             except User.DoesNotExist:
-                # Split full_name into first & last
-                parts = full_name_from_apple.split(" ", 1)
-                first_name = parts[0] if len(parts) > 0 else ""
+                parts = full_name_raw.split(" ", 1)
+                first_name = parts[0] if parts else ""
                 last_name = parts[1] if len(parts) > 1 else ""
 
                 user = User.objects.create(
-                    username=sub,
+                    username=sub or random_username(),
                     email=email,
                     first_name=first_name,
                     last_name=last_name,
@@ -717,47 +723,38 @@ class CustomAppleLogin(View):
                 )
                 created = True
 
-            # ---------------------------
-            # Update names if Apple sends new ones
-            # ---------------------------
-            if full_name_from_apple:
-                parts = full_name_from_apple.split(" ", 1)
-                first_name = parts[0] if len(parts) > 0 else ""
-                last_name = parts[1] if len(parts) > 1 else ""
+            # Update name
+            if full_name_raw:
+                parts = full_name_raw.split(" ", 1)
+                user.first_name = parts[0]
+                user.last_name = parts[1] if len(parts) > 1 else ""
+                user.save()
 
-                updated = False
-                if first_name and user.first_name != first_name:
-                    user.first_name = first_name
-                    updated = True
-                if last_name and user.last_name != last_name:
-                    user.last_name = last_name
-                    updated = True
-                if updated:
-                    user.save()
+            # Profile
+            profile, _ = Profile.objects.get_or_create(user=user)
 
-            # ---------------------------
-            # FULL NAME always correct
-            # ---------------------------
-            full_name = f"{user.first_name} {user.last_name}".strip()
-
-            # ---------------------------
-            # Generate JWT tokens
-            # ---------------------------
+            # Tokens
             refresh = RefreshToken.for_user(user)
-            access = refresh.access_token
 
-            # ---------------------------
-            # Final Response (Full Name only)
-            # ---------------------------
+            token_obj, _ = Token.objects.get_or_create(user=user)
+            token_obj.email = user.email
+            token_obj.refresh_token = str(refresh)
+            token_obj.access_token = str(refresh.access_token)
+            token_obj.refresh_token_expires_at = timezone.now() + refresh.lifetime
+            token_obj.access_token_expires_at = timezone.now() + timedelta(minutes=15)
+            token_obj.revoked = False
+            token_obj.save()
+
             return JsonResponse({
                 "success": True,
                 "created": created,
                 "refresh": str(refresh),
-                "access": str(access),
+                "access": str(refresh.access_token),
                 "user": {
                     "id": user.id,
                     "email": user.email,
-                    "full_name": full_name,
+                    "full_name": f"{user.first_name} {user.last_name}".strip(),
+                    "profile_image": profile.image.url if profile.image else None,
                 }
             }, status=200)
 

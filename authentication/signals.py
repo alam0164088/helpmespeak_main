@@ -9,7 +9,6 @@ def create_or_update_user_profile(sender, instance, created, **kwargs):
         # নতুন ইউজারের জন্য profile create
         Profile.objects.create(user=instance)
     else:
-        # existing ইউজারের profile check করে update
         try:
             profile = instance.profile
         except ObjectDoesNotExist:
