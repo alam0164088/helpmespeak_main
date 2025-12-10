@@ -521,6 +521,7 @@ class ResendOTPView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
+
 class MeView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -531,8 +532,9 @@ class MeView(APIView):
 
     def put(self, request):
         try:
-            profile, created = Profile.objects.get_or_create(user=request.user)
+            profile, _ = Profile.objects.get_or_create(user=request.user)
 
+            # Profile update
             serializer = ProfileUpdateSerializer(
                 profile,
                 data=request.data,
@@ -542,6 +544,15 @@ class MeView(APIView):
 
             if serializer.is_valid():
                 serializer.save()
+
+                # User ফিল্ড আপডেট (full_name, first_name, last_name)
+                full_name = request.data.get("full_name")
+                if full_name:
+                    parts = full_name.strip().split(" ", 1)
+                    request.user.first_name = parts[0]
+                    request.user.last_name = parts[1] if len(parts) > 1 else ""
+                    request.user.full_name = full_name
+                    request.user.save(update_fields=['first_name', 'last_name', 'full_name'])
 
                 return Response({
                     "message": "Profile updated successfully",
@@ -555,7 +566,6 @@ class MeView(APIView):
 
     def patch(self, request):
         return self.put(request)
-
 
 import random
 import string

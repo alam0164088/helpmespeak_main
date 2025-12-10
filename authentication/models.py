@@ -110,7 +110,6 @@ class PasswordResetSession(models.Model):
         return f"Password Reset Session for {self.user.email}"
 
 # 
-
 import uuid
 from django.db import models
 from django.conf import settings
