@@ -98,3 +98,6 @@ class IAPValidateView(views.APIView):
             "renewal_date": subscription.renewal_date,
             "platform": subscription.platform
         }, status=status.HTTP_200_OK)
+    
+
+# hello
