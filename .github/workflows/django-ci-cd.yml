@@ -1,0 +1,100 @@
+name: Django CI/CD
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:13
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      # ১. কোড চেকআউট
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # ২. পাইথন সেটআপ
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      # ৩. এনভায়রনমেন্ট ভেরিয়েবল সেট করা
+      - name: Set environment variables
+        run: |
+          echo "DJANGO_SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}" >> $GITHUB_ENV
+          echo "DEBUG=${{ secrets.DEBUG }}" >> $GITHUB_ENV
+          echo "ALLOWED_HOSTS=${{ secrets.ALLOWED_HOSTS }}" >> $GITHUB_ENV
+          echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" >> $GITHUB_ENV
+          echo "EMAIL_BACKEND=${{ secrets.EMAIL_BACKEND }}" >> $GITHUB_ENV
+          echo "EMAIL_HOST=${{ secrets.EMAIL_HOST }}" >> $GITHUB_ENV
+          echo "EMAIL_PORT=${{ secrets.EMAIL_PORT }}" >> $GITHUB_ENV
+          echo "EMAIL_USE_SSL=${{ secrets.EMAIL_USE_SSL }}" >> $GITHUB_ENV
+          echo "EMAIL_USE_TLS=${{ secrets.EMAIL_USE_TLS }}" >> $GITHUB_ENV
+          echo "EMAIL_HOST_USER=${{ secrets.EMAIL_HOST_USER }}" >> $GITHUB_ENV
+          echo "EMAIL_HOST_PASSWORD='${{ secrets.EMAIL_HOST_PASSWORD }}'" >> $GITHUB_ENV
+          echo "DEFAULT_FROM_EMAIL=${{ secrets.DEFAULT_FROM_EMAIL }}" >> $GITHUB_ENV
+          # Google & Apple
+          echo "GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}" >> $GITHUB_ENV
+          echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> $GITHUB_ENV
+          echo "GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}" >> $GITHUB_ENV
+          echo "GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}" >> $GITHUB_ENV
+          echo "GOOGLE_REDIRECT_URI=${{ secrets.GOOGLE_REDIRECT_URI }}" >> $GITHUB_ENV
+          echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" >> $GITHUB_ENV
+          echo "APPLE_CLIENT_ID=${{ secrets.APPLE_CLIENT_ID }}" >> $GITHUB_ENV
+          echo "APPLE_KEY_ID=${{ secrets.APPLE_KEY_ID }}" >> $GITHUB_ENV
+          echo "APPLE_PRIVATE_KEY='${{ secrets.APPLE_PRIVATE_KEY }}'" >> $GITHUB_ENV
+          echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}" >> $GITHUB_ENV
+          echo "APPLE_BUNDLE_ID=${{ secrets.APPLE_BUNDLE_ID }}" >> $GITHUB_ENV
+          echo "APPLE_CALLBACK_URL=${{ secrets.APPLE_CALLBACK_URL }}" >> $GITHUB_ENV
+
+
+      # ৪. ডিপেনডেন্সি ইন্সটল
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # ৫. মাইগ্রেশন রান
+      - name: Run Migrations
+        run: python manage.py migrate
+
+      # ৬. টেস্ট রান
+      - name: Run Tests
+        run: python manage.py test
+
+      # ৭. EC2 তে Deploy করা
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v0.1.5
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /home/ubuntu/helpmespeak_main/
+            git reset --hard
+            git pull origin main
+            source env/bin/activate
+            pip install -r requirements.txt
+            python manage.py migrate
+            python manage.py collectstatic --noinput
+            sudo nginx -t
+            sudo systemctl restart gunicorn
+            sudo systemctl restart nginx

@@ -1,0 +1,25 @@
+# Python/Django ignores
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+
+# Virtual environment
+env/
+venv/
+ENV/
+
+# Media files
+
+
+# Static files
+staticfiles/
+
+# Django secret and environment variables
+.env
+
+# IDE/Editor files
+.vscode/
+.idea/
+*.swp
