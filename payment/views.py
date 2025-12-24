@@ -2,6 +2,7 @@ from rest_framework import generics, status, views
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
+from django.utils.timezone import now
 
 from .models import Plan, Subscription
 from .serializers import (
@@ -101,3 +102,37 @@ class IAPValidateView(views.APIView):
     
 
 # hello
+
+
+
+class SubscriptionCheckView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        try:
+            subscription = Subscription.objects.get(user=request.user)
+        except Subscription.DoesNotExist:
+            return Response({
+                "active": False,
+                "need_subscription": True,
+                "message": "You need a subscription to continue using the service."
+            }, status=200)
+
+        # ✅ Auto-check subscription validity
+        subscription.is_active_and_valid()
+
+        if subscription.status == 'expired':
+            return Response({
+                "active": False,
+                "need_subscription": True,
+                "message": "Your free trial has expired. Please subscribe to continue."
+            }, status=200)
+
+        # যদি এখনও ট্রায়াল/পেইড একটিভ থাকে
+        return Response({
+            "active": True,
+            "need_subscription": False,
+            "status": subscription.status,
+            "plan": subscription.plan.name if subscription.plan else None,
+            "renewal_date": subscription.renewal_date,
+        }, status=200)
