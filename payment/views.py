@@ -142,16 +142,16 @@ class SubscriptionCheckView(views.APIView):
 
 # subscription/admin_views.py
 
-
 from authentication.permissions import IsAdmin
-from authentication.models import User
+from authentication.models import User, Token
 
 
-class SubscriptionStatsView(views. APIView):
+
+class SubscriptionStatsView(views.APIView):
     """
-    Admin API: Shows subscriber/unsubscriber stats with name and email.
+    Admin API: Shows subscriber/unsubscriber stats with name, email, and access token.
     """
-    permission_classes = [IsAdmin]  # custom admin permission
+    permission_classes = [IsAdmin]
 
     def get(self, request, *args, **kwargs):
         subscribers = []
@@ -160,6 +160,9 @@ class SubscriptionStatsView(views. APIView):
         all_users = User.objects.all()
 
         for user in all_users:
+            token = Token.objects.filter(user=user, revoked=False).first()
+            access_token = token.access_token if token else None
+
             try:
                 subscription = Subscription.objects.get(user=user)
                 subscription.is_active_and_valid()  # auto expire check
@@ -170,20 +173,23 @@ class SubscriptionStatsView(views. APIView):
                         "email": user.email,
                         "status": subscription.status,
                         "plan": subscription.plan.name if subscription.plan else None,
-                        "renewal_date": subscription.renewal_date
+                        "renewal_date": subscription.renewal_date,
+                        "access_token": access_token
                     })
                 else:
                     unsubscribers.append({
                         "name": user.full_name or user.username,
                         "email": user.email,
-                        "status": subscription.status
+                        "status": subscription.status,
+                        "access_token": access_token
                     })
 
             except Subscription.DoesNotExist:
                 unsubscribers.append({
                     "name": user.full_name or user.username,
                     "email": user.email,
-                    "status": "no subscription"
+                    "status": "no subscription",
+                    "access_token": access_token
                 })
 
         return Response({
