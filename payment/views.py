@@ -136,3 +136,6 @@ class SubscriptionCheckView(views.APIView):
             "plan": subscription.plan.name if subscription.plan else None,
             "renewal_date": subscription.renewal_date,
         }, status=200)
+
+
+# dfd
