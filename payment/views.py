@@ -143,13 +143,13 @@ class SubscriptionCheckView(views.APIView):
 # subscription/admin_views.py
 
 from authentication.permissions import IsAdmin
-from authentication.models import User, Token
+from authentication.models import User
 
 
 
 class SubscriptionStatsView(views.APIView):
     """
-    Admin API: Shows subscriber/unsubscriber stats with name, email, and access token.
+    Admin API: Shows subscriber/unsubscriber stats with name and email.
     """
     permission_classes = [IsAdmin]
 
@@ -160,36 +160,30 @@ class SubscriptionStatsView(views.APIView):
         all_users = User.objects.all()
 
         for user in all_users:
-            token = Token.objects.filter(user=user, revoked=False).first()
-            access_token = token.access_token if token else None
-
             try:
                 subscription = Subscription.objects.get(user=user)
-                subscription.is_active_and_valid()  # auto expire check
+                subscription.is_active_and_valid()  # auto expiry check
 
                 if subscription.status in ['active', 'trial']:
                     subscribers.append({
-                        "name": user.full_name or user.username,
+                        "name": user.full_name or user.email,
                         "email": user.email,
                         "status": subscription.status,
                         "plan": subscription.plan.name if subscription.plan else None,
-                        "renewal_date": subscription.renewal_date,
-                        "access_token": access_token
+                        "renewal_date": subscription.renewal_date
                     })
                 else:
                     unsubscribers.append({
-                        "name": user.full_name or user.username,
+                        "name": user.full_name or user.email,
                         "email": user.email,
-                        "status": subscription.status,
-                        "access_token": access_token
+                        "status": subscription.status
                     })
 
             except Subscription.DoesNotExist:
                 unsubscribers.append({
-                    "name": user.full_name or user.username,
+                    "name": user.full_name or user.email,
                     "email": user.email,
-                    "status": "no subscription",
-                    "access_token": access_token
+                    "status": "no subscription"
                 })
 
         return Response({
