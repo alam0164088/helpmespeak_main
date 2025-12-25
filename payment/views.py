@@ -138,4 +138,58 @@ class SubscriptionCheckView(views.APIView):
         }, status=200)
 
 
-# dfd
+
+
+# subscription/admin_views.py
+
+
+from authentication.permissions import IsAdmin
+from authentication.models import User
+
+
+class SubscriptionStatsView(views. APIView):
+    """
+    Admin API: Shows subscriber/unsubscriber stats with name and email.
+    """
+    permission_classes = [IsAdmin]  # custom admin permission
+
+    def get(self, request, *args, **kwargs):
+        subscribers = []
+        unsubscribers = []
+
+        all_users = User.objects.all()
+
+        for user in all_users:
+            try:
+                subscription = Subscription.objects.get(user=user)
+                subscription.is_active_and_valid()  # auto expire check
+
+                if subscription.status in ['active', 'trial']:
+                    subscribers.append({
+                        "name": user.full_name or user.username,
+                        "email": user.email,
+                        "status": subscription.status,
+                        "plan": subscription.plan.name if subscription.plan else None,
+                        "renewal_date": subscription.renewal_date
+                    })
+                else:
+                    unsubscribers.append({
+                        "name": user.full_name or user.username,
+                        "email": user.email,
+                        "status": subscription.status
+                    })
+
+            except Subscription.DoesNotExist:
+                unsubscribers.append({
+                    "name": user.full_name or user.username,
+                    "email": user.email,
+                    "status": "no subscription"
+                })
+
+        return Response({
+            "total_users": all_users.count(),
+            "subscribers_count": len(subscribers),
+            "unsubscribers_count": len(unsubscribers),
+            "subscribers": subscribers,
+            "unsubscribers": unsubscribers
+        }, status=200)
