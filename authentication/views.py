@@ -268,8 +268,13 @@ class VerifyOTPView(APIView):
             else:
                 return Response({"detail": "OTP expired or invalid."}, status=status.HTTP_400_BAD_REQUEST)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
 
-# 
+
+
+
+
+
 class LoginView(APIView):
     permission_classes = [AllowAny]
 
@@ -278,56 +283,70 @@ class LoginView(APIView):
         if serializer.is_valid():
             email = serializer.validated_data['email']
             password = serializer.validated_data['password']
-            user = User.objects.filter(email=email).first()
-            if user and user.check_password(password):
-                if not user.is_email_verified:
-                    return Response({"detail": "Email not verified."}, status=status.HTTP_403_FORBIDDEN)
-                if user.is_2fa_enabled:
-                    code = user.generate_email_verification_code()
-                    send_mail(
-                        '2FA Verification',
-                        f'Your 2FA OTP is {code}. Expires in 5 minutes.',
-                        settings.DEFAULT_FROM_EMAIL,
-                        [user.email],
-                        fail_silently=False,
-                    )
-                    return Response({
-                        "detail": "2FA required. OTP sent to email.",
-                        "next_step": "verify_2fa_otp"
-                    }, status=status.HTTP_206_PARTIAL_CONTENT)
-                refresh = RefreshToken.for_user(user)
-                lifetime = timedelta(days=30) if serializer.validated_data['remember_me'] else timedelta(days=7)
-                refresh.set_exp(lifetime=lifetime)
-                refresh_token_str = str(refresh)
-                access_token_str = str(refresh.access_token)
-                access_expires_in = 900
-                refresh_expires_in = int(refresh.lifetime.total_seconds())
+            is_admin_login = request.data.get('is_admin_login', False)  # frontend থেকে পাঠানো হবে
 
-                Token.objects.create(
-                    user=user,
-                    email=user.email,
-                    refresh_token=refresh_token_str,
-                    access_token=access_token_str,
-                    refresh_token_expires_at=timezone.now() + timedelta(seconds=refresh_expires_in),
-                    access_token_expires_at=timezone.now() + timedelta(minutes=15)
+            user = User.objects.filter(email=email).first()
+            if not user or not user.check_password(password):
+                return Response({"detail": "Invalid credentials."}, status=status.HTTP_401_UNAUTHORIZED)
+
+            # ❌ Admin protection
+            if user.role == 'admin' and not is_admin_login:
+                return Response({"detail": "Admin users can only login via admin interface."}, status=status.HTTP_403_FORBIDDEN)
+
+            if not user.is_email_verified:
+                return Response({"detail": "Email not verified."}, status=status.HTTP_403_FORBIDDEN)
+
+            # ২FA enabled check
+            if user.is_2fa_enabled:
+                code = user.generate_email_verification_code()
+                # Send OTP
+                send_mail(
+                    '2FA Verification',
+                    f'Your 2FA OTP is {code}. Expires in 5 minutes.',
+                    settings.DEFAULT_FROM_EMAIL,
+                    [user.email],
+                    fail_silently=False,
                 )
-                logger.info(f"User logged in: {user.email}")
                 return Response({
-                    "access_token": access_token_str,
-                    "access_token_expires_in": access_expires_in,
-                    "refresh_token": refresh_token_str,
-                    "refresh_token_expires_in": refresh_expires_in,
-                    "token_type": "Bearer",
-                    "user": {
-                        "id": user.id,
-                        "email": user.email,
-                        "full_name": user.full_name,
-                        "email_verified": user.is_email_verified,
-                        "role": user.role
-                    }
-                }, status=status.HTTP_200_OK)
-            return Response({"detail": "Invalid credentials."}, status=status.HTTP_401_UNAUTHORIZED)
+                    "detail": "2FA required. OTP sent to email.",
+                    "next_step": "verify_2fa_otp"
+                }, status=status.HTTP_206_PARTIAL_CONTENT)
+
+            # Generate JWT Tokens
+            refresh = RefreshToken.for_user(user)
+            lifetime = timedelta(days=30) if serializer.validated_data.get('remember_me') else timedelta(days=7)
+            refresh.set_exp(lifetime=lifetime)
+            refresh_token_str = str(refresh)
+            access_token_str = str(refresh.access_token)
+
+            # Save token in DB
+            Token.objects.create(
+                user=user,
+                email=user.email,
+                refresh_token=refresh_token_str,
+                access_token=access_token_str,
+                refresh_token_expires_at=timezone.now() + timedelta(seconds=int(refresh.lifetime.total_seconds())),
+                access_token_expires_at=timezone.now() + timedelta(minutes=15)
+            )
+
+            logger.info(f"User logged in: {user.email}")
+            return Response({
+                "access_token": access_token_str,
+                "access_token_expires_in": 900,
+                "refresh_token": refresh_token_str,
+                "refresh_token_expires_in": int(refresh.lifetime.total_seconds()),
+                "token_type": "Bearer",
+                "user": {
+                    "id": user.id,
+                    "email": user.email,
+                    "full_name": user.full_name,
+                    "email_verified": user.is_email_verified,
+                    "role": user.role
+                }
+            }, status=status.HTTP_200_OK)
+
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
 
 
 class RefreshTokenView(APIView):
@@ -785,17 +804,13 @@ from rest_framework.permissions import IsAuthenticated
 from .models import Profile
 
 logger = logging.getLogger(__name__)
-
 class DeleteAccountView(APIView):
     permission_classes = [IsAuthenticated]
 
     def delete(self, request):
         user = request.user
-        if not user or user.is_anonymous:
-            return Response(
-                {"detail": "Authentication credentials were not provided or invalid."},
-                status=status.HTTP_401_UNAUTHORIZED
-            )
+        if user.role == 'admin':
+            return Response({"detail": "Admin accounts cannot be deleted via this endpoint."}, status=status.HTTP_403_FORBIDDEN)
 
         try:
             # ১️⃣ Profile delete
@@ -813,17 +828,11 @@ class DeleteAccountView(APIView):
             Token.objects.filter(user=user).delete()
             logger.info(f"Tokens deleted for user: {user.email}")
 
-            # ৩️⃣ AppleUserToken delete (যদি থাকে)
-            from .models import AppleUserToken
-            AppleUserToken.objects.filter(user=user).delete()
-            logger.info(f"Apple tokens deleted for user: {user.email}")
-
-            # ৪️⃣ PasswordResetSession delete
-            from .models import PasswordResetSession
+            # ৩️⃣ PasswordResetSession delete
             PasswordResetSession.objects.filter(user=user).delete()
             logger.info(f"Password reset sessions deleted for user: {user.email}")
 
-            # ৫️⃣ অবশেষে ইউজার ডিলেট
+            # ৪️⃣ অবশেষে ইউজার ডিলিট
             email = user.email
             user.delete()
             logger.info(f"User account deleted: {email}")
