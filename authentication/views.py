@@ -271,10 +271,6 @@ class VerifyOTPView(APIView):
     
 
 
-
-
-
-
 class LoginView(APIView):
     permission_classes = [AllowAny]
 
@@ -283,23 +279,17 @@ class LoginView(APIView):
         if serializer.is_valid():
             email = serializer.validated_data['email']
             password = serializer.validated_data['password']
-            is_admin_login = request.data.get('is_admin_login', False)  # frontend থেকে পাঠানো হবে
+            user = User.objects.filter(email=email, role='user').first()  # শুধুমাত্র user
 
-            user = User.objects.filter(email=email).first()
             if not user or not user.check_password(password):
                 return Response({"detail": "Invalid credentials."}, status=status.HTTP_401_UNAUTHORIZED)
-
-            # ❌ Admin protection
-            if user.role == 'admin' and not is_admin_login:
-                return Response({"detail": "Admin users can only login via admin interface."}, status=status.HTTP_403_FORBIDDEN)
 
             if not user.is_email_verified:
                 return Response({"detail": "Email not verified."}, status=status.HTTP_403_FORBIDDEN)
 
-            # ২FA enabled check
+            # 2FA check
             if user.is_2fa_enabled:
                 code = user.generate_email_verification_code()
-                # Send OTP
                 send_mail(
                     '2FA Verification',
                     f'Your 2FA OTP is {code}. Expires in 5 minutes.',
@@ -312,41 +302,74 @@ class LoginView(APIView):
                     "next_step": "verify_2fa_otp"
                 }, status=status.HTTP_206_PARTIAL_CONTENT)
 
-            # Generate JWT Tokens
+            # Token generation
+            Token.objects.filter(user=user).delete()
             refresh = RefreshToken.for_user(user)
-            lifetime = timedelta(days=30) if serializer.validated_data.get('remember_me') else timedelta(days=7)
-            refresh.set_exp(lifetime=lifetime)
-            refresh_token_str = str(refresh)
-            access_token_str = str(refresh.access_token)
+            token_obj, _ = Token.objects.get_or_create(user=user)
+            token_obj.refresh_token = str(refresh)
+            token_obj.access_token = str(refresh.access_token)
+            token_obj.refresh_token_expires_at = timezone.now() + refresh.lifetime
+            token_obj.access_token_expires_at = timezone.now() + timedelta(minutes=15)
+            token_obj.revoked = False
+            token_obj.save()
 
-            # Save token in DB
-            Token.objects.create(
-                user=user,
-                email=user.email,
-                refresh_token=refresh_token_str,
-                access_token=access_token_str,
-                refresh_token_expires_at=timezone.now() + timedelta(seconds=int(refresh.lifetime.total_seconds())),
-                access_token_expires_at=timezone.now() + timedelta(minutes=15)
-            )
-
-            logger.info(f"User logged in: {user.email}")
             return Response({
-                "access_token": access_token_str,
-                "access_token_expires_in": 900,
-                "refresh_token": refresh_token_str,
-                "refresh_token_expires_in": int(refresh.lifetime.total_seconds()),
+                "access_token": str(refresh.access_token),
+                "refresh_token": str(refresh),
                 "token_type": "Bearer",
                 "user": {
                     "id": user.id,
                     "email": user.email,
-                    "full_name": user.full_name,
-                    "email_verified": user.is_email_verified,
+                    "full_name": f"{user.first_name} {user.last_name}".strip(),
                     "role": user.role
                 }
             }, status=status.HTTP_200_OK)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
+
+
+class AdminLoginView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = LoginSerializer(data=request.data)
+        if serializer.is_valid():
+            email = serializer.validated_data['email']
+            password = serializer.validated_data['password']
+            user = User.objects.filter(email=email, role='admin').first()  # শুধুমাত্র admin
+
+            if not user or not user.check_password(password):
+                return Response({"detail": "Invalid credentials or not an admin."}, status=status.HTTP_401_UNAUTHORIZED)
+
+            if not user.is_email_verified:
+                return Response({"detail": "Email not verified."}, status=status.HTTP_403_FORBIDDEN)
+
+            # Token generation
+            Token.objects.filter(user=user).delete()
+            refresh = RefreshToken.for_user(user)
+            token_obj, _ = Token.objects.get_or_create(user=user)
+            token_obj.refresh_token = str(refresh)
+            token_obj.access_token = str(refresh.access_token)
+            token_obj.refresh_token_expires_at = timezone.now() + refresh.lifetime
+            token_obj.access_token_expires_at = timezone.now() + timedelta(minutes=15)
+            token_obj.revoked = False
+            token_obj.save()
+
+            return Response({
+                "access_token": str(refresh.access_token),
+                "refresh_token": str(refresh),
+                "token_type": "Bearer",
+                "user": {
+                    "id": user.id,
+                    "email": user.email,
+                    "full_name": f"{user.first_name} {user.last_name}".strip(),
+                    "role": user.role
+                }
+            }, status=status.HTTP_200_OK)
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
 
 
 class RefreshTokenView(APIView):

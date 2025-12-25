@@ -1,5 +1,5 @@
 # authentication/urls.py
-from .views import CustomAppleLogin, DeleteAccountView
+from .views import AdminLoginView, CustomAppleLogin, DeleteAccountView
 from django.urls import path
 from .views import (
     RegisterView,
@@ -32,6 +32,7 @@ urlpatterns = [
 
     # Login & Tokens
     path('auth/login/', LoginView.as_view(), name='login'),
+    path('auth/admin/login/', AdminLoginView.as_view(), name='admin-login'),
     path('auth/token/refresh/', RefreshTokenView.as_view(), name='refresh-token'),
     path('auth/logout/', LogoutView.as_view(), name='logout'),
 
