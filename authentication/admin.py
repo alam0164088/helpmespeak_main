@@ -5,7 +5,6 @@ from django.utils.translation import gettext_lazy as _
 
 # Custom User Admin
 class UserAdmin(BaseUserAdmin):
-    # Fields to display in the admin list view
     list_display = ('email', 'full_name', 'role', 'is_email_verified', 'is_2fa_enabled', 'is_active', 'created_at')
     list_filter = ('role', 'is_email_verified', 'is_2fa_enabled', 'is_active')
     search_fields = ('email', 'full_name')
@@ -26,14 +25,10 @@ class UserAdmin(BaseUserAdmin):
     )
     filter_horizontal = ()
     readonly_fields = ('created_at', 'last_login')
-
-    # Custom action to mark users as email verified
-    actions = ['mark_email_verified']
-
-    def mark_email_verified(self, request, queryset):
-        queryset.update(is_email_verified=True, is_active=True, email_verification_code=None, email_verification_code_expires_at=None)
-        self.message_user(request, "Selected users' emails have been marked as verified.")
-    mark_email_verified.short_description = "Mark selected users' emails as verified"
+    def save_model(self, request, obj, form, change):
+        if not obj.username:
+            obj.username = obj.email.split('@')[0]  # email থেকে auto-generate
+        super().save_model(request, obj, form, change)
 
 # Token Admin
 class TokenAdmin(admin.ModelAdmin):
