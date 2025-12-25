@@ -1,7 +1,7 @@
 # payment/urls.py
 
 from django.urls import path
-from .views import PlanListView, IAPValidateView, SubscriptionManageView,SubscriptionCheckView
+from .views import PlanListView, IAPValidateView, SubscriptionManageView,SubscriptionCheckView,SubscriptionStatsView
 
 urlpatterns = [
     # প্ল্যান দেখানোর জন্য
@@ -11,4 +11,5 @@ urlpatterns = [
     
     path('iap/validate/', IAPValidateView.as_view(), name='iap-validate'), 
     path('check-subscription/', SubscriptionCheckView.as_view(), name='check-subscription'),
+    path('stats/',SubscriptionStatsView.as_view(), name='subscription-stats'),
 ]
