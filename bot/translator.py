@@ -1,4 +1,4 @@
-
+# bot/translator.py
 import os
 import json
 import re
@@ -65,9 +65,48 @@ class AITranslatorChatbot:
             
         except Exception as e:
             raise ValueError(f"Initialization failed: {str(e)}")
+    
+    def get_normal_reply(self, user_input: str) -> str:
+        # OpenAI-ভিত্তিক নরমাল চ্যাট রেসপন্স (fallback হিসেবে simple reply)
+        try:
+            ai_reply = self.get_ai_reply(user_input)
+            if ai_reply:
+                return ai_reply
+        except Exception:
+            pass
+        return f"I received your message: {user_input}"
+    
+    def get_ai_reply(self, user_input: str, temperature: float = 0.6, max_tokens: int = 512) -> str:
+        """
+        Return a normal conversational reply from OpenAI. Falls back to None on errors.
+        """
+        try:
+            response = self.openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a helpful, concise assistant."},
+                    {"role": "user", "content": user_input}
+                ],
+                max_tokens=max_tokens,
+                temperature=temperature
+            )
+            content = response.choices[0].message.content.strip()
+            # strip code fences if any
+            if content.startswith("```") and content.endswith("```"):
+                # remove first and last fence
+                parts = content.split("\n")
+                if len(parts) >= 3:
+                    content = "\n".join(parts[1:-1]).strip()
+            return content
+        except Exception:
+            return None
 
     def smart_text_extraction(self, user_input: str, target_language: str) -> str:
         extraction_prompt = f"""You are a smart text extractor for translation requests. Your job is to identify and extract ONLY the main content that needs to be translated, removing all command words, language specifications, and instructions.
+
+
+    
+
 
 User Input: "{user_input}"
 Target Language: {target_language}
@@ -453,15 +492,43 @@ Respond in JSON:
                     'confidence': 0.8
                 }
         if has_explicit_keyword:
-            extracted_text = self.smart_text_extraction(user_input, "English")
-            if not extracted_text:
-                extracted_text = self.fallback_text_extraction(user_input)
+            # If user used a translation keyword but DID NOT specify a target language,
+            # treat it as NOT a translation request so the system falls back to normal chat.
+            # Only consider it a translation request if a target language is present.
+            lang_match = re.search(r'(?:to|in|into)\s+([a-zA-Z\s]+)$', user_input_lower)
+            if lang_match:
+                lang_part = lang_match.group(1).strip()
+                # try to resolve language
+                lang_key = lang_part.replace(' ', '')
+                target_code = None
+                # check mapping shortcuts first
+                target_code = lang_mapping.get(lang_key) or lang_mapping.get(lang_part)
+                if not target_code:
+                    for code, name in self.supported_languages.items():
+                        if lang_key and (lang_key in name.lower().replace(' ', '') or name.lower().replace(' ', '').startswith(lang_key[:4])):
+                            target_code = code
+                            break
+                        if lang_part and (lang_part in name.lower() or name.lower().startswith(lang_part[:4])):
+                            target_code = code
+                            break
+                if target_code and target_code in self.supported_languages:
+                    extracted_text = self.smart_text_extraction(user_input, self.supported_languages[target_code])
+                    if not extracted_text or extracted_text.strip() == "":
+                        extracted_text = self.fallback_text_extraction(user_input)
+                    return {
+                        'is_translation_request': True,
+                        'text': extracted_text.strip(),
+                        'target_language_code': target_code,
+                        'target_language_name': self.supported_languages[target_code],
+                        'confidence': 0.6
+                    }
+            # no valid target language found -> not a translation request
             return {
-                'is_translation_request': True,
-                'text': extracted_text.strip(),
-                'target_language_code': 'en',
-                'target_language_name': 'English',
-                'confidence': 0.4
+                'is_translation_request': False,
+                'text': None,
+                'target_language_code': None,
+                'target_language_name': None,
+                'confidence': 0.2
             }
         return {
             'is_translation_request': False,
