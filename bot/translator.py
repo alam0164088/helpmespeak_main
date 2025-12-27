@@ -136,6 +136,13 @@ class AITranslatorChatbot:
         # Replace isolated occurrences of common assistant identifiers
         t = re.sub(r'(?i)\b(assistant|bot|virtual assistant)\b', 'helpmespeak', t)
 
+        # Collapse repeated occurrences of the replacement (avoid "helpmespeak helpmespeak")
+        try:
+            # handle patterns like "helpmespeak helpmespeak", "helpmespeak, helpmespeak." etc.
+            t = re.sub(r'(?i)\b(helpmespeak)(?:[\s,;:.!?-]+\1)+\b', r'\1', t)
+        except Exception:
+            pass
+
         # Normalize multiple spaces introduced by replacements
         t = re.sub(r'\s{2,}', ' ', t).strip()
 
