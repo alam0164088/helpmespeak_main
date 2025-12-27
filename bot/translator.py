@@ -131,9 +131,46 @@ class AITranslatorChatbot:
                 parts = content.split("\n")
                 if len(parts) >= 3:
                     content = "\n".join(parts[1:-1]).strip()
+
+            # sanitize names: ensure any model/assistant name becomes "helpmespeak"
+            try:
+                content = self.sanitize_ai_reply(content)
+            except Exception:
+                pass
+
             return content
         except Exception:
             return None
+
+    def sanitize_ai_reply(self, text: str) -> str:
+        """
+        Replace occurrences of model/assistant names in AI reply with 'helpmespeak',
+        while keeping other parts of the reply intact.
+        """
+        if not text or not isinstance(text, str):
+            return text
+
+        t = text
+
+        # Replace explicit model or vendor names (ChatGPT, OpenAI, GPT-4, etc.)
+        t = re.sub(r'\b(ChatGPT|Chat GPT|OpenAI|GPT-4o-mini|GPT-4|GPT4|GPT-3\.5|GPT-3|gpt-4o-mini)\b',
+                   'helpmespeak', t, flags=re.IGNORECASE)
+
+        # Replace phrases like "my name is X", "I am X", "you can call me X" -> keep phrase but force name to helpmespeak
+        def _name_replacer(m):
+            prefix = m.group(1)
+            return f"{prefix} helpmespeak"
+
+        t = re.sub(r'(?i)\b(my name is|i am|i\'m|call me|you can call me|you may call me|you can call me me)\b\s*[A-Za-z0-9_\-\'"]{0,60}',
+                   _name_replacer, t)
+
+        # Replace isolated occurrences of common assistant identifiers
+        t = re.sub(r'(?i)\b(assistant|bot|virtual assistant)\b', 'helpmespeak', t)
+
+        # Normalize multiple spaces introduced by replacements
+        t = re.sub(r'\s{2,}', ' ', t).strip()
+
+        return t
 
     def smart_text_extraction(self, user_input: str, target_language: str) -> str:
         extraction_prompt = f"""You are a smart text extractor for translation requests. Your job is to identify and extract ONLY the main content that needs to be translated, removing all command words, language specifications, and instructions.
