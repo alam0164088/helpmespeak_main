@@ -67,7 +67,41 @@ class AITranslatorChatbot:
             raise ValueError(f"Initialization failed: {str(e)}")
     
     def get_normal_reply(self, user_input: str) -> str:
-        # OpenAI-ভিত্তিক নরমাল চ্যাট রেসপন্স (fallback হিসেবে simple reply)
+        # If user asks the bot's name in ANY language, always reply "helpmespeak".
+        try:
+            lowered = user_input.strip().lower()
+            name_triggers = [
+                # English
+                "what is your name", "what's your name", "your name", "who are you",
+                # Bengali / Hindi / Urdu
+                "তোমার নাম", "আপনার নাম", "তুমি কে", "আপনি কে", "তোমার নাম কি", "আপনার নাম কি",
+                "तुम्हारा नाम", "तुम्हारा नाम क्या", "आपका नाम", "आपका नाम क्या", "नाम क्या",
+                "آپ کا نام", "آپ کا نام کیا", "نام کیا",
+                # Spanish / Portuguese
+                "cómo te llamas", "como te llamas", "cual es tu nombre", "cuál es tu nombre", "tu nombre",
+                "como te chamas", "qual é o seu nome", "seu nome",
+                # French / German / Italian / Dutch / Swedish / Polish
+                "quel est votre nom", "quel est ton nom", "comment vous appelez", "comment tu t'appelles",
+                "wie heißt du", "wie heißen sie", "dein name", "wie heißt", "come ti chiami",
+                "hoe heet je", "vad heter du", "jak masz na imię", "jak się nazywasz", "imię",
+                # Chinese / Japanese / Korean
+                "你叫什么", "你叫什么名字", "你的名字", "お名前", "あなたの名前", "名前は", "名前",
+                "이름", "이름이 뭐", "이름은", "누구세요",
+                # Arabic / Hebrew
+                "ما اسمك", "اسمك", "من انت", "איך קוראים לך", "מה שמך",
+                # Russian / Ukrainian / Czech / Romanian / Turkish / Vietnamese / Thai
+                "как тебя зовут", "как вас зовут", "ваше имя", "твое имя", "cum te numești", "adın ne",
+                "tên bạn là gì", "คุณชื่ออะไร", "ชื่อของคุณ",
+                # Generic single-word tokens to catch many languages
+                "name", "nombre", "nom", "naam", "имя", "名字", "名前", "이름"
+            ]
+            for trig in name_triggers:
+                if trig in lowered:
+                    return "helpmespeak"
+        except Exception:
+            pass
+
+        # OpenAI-based normal chat reply (fallback to simple echo)
         try:
             ai_reply = self.get_ai_reply(user_input)
             if ai_reply:
