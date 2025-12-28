@@ -114,23 +114,46 @@ class AITranslatorChatbot:
     def sanitize_ai_reply(self, text: str) -> str:
         """
         Replace occurrences of model/assistant names in AI reply with 'helpmespeak',
-        while keeping other parts of the reply intact.
+        while keeping other parts of the reply intact. Also clean formatting:
+        - convert escaped newlines to real newlines
+        - remove backslashes, backticks, hashes and stray escape chars
+        - collapse duplicate helpmespeak tokens
         """
         if not text or not isinstance(text, str):
             return text
 
         t = text
 
-        # Replace explicit model or vendor names (ChatGPT, OpenAI, GPT-4, etc.)
+        # Try to unescape JSON/unicode style escapes so "\n" becomes an actual newline, etc.
+        try:
+            # decode unicode escapes safely (won't raise for normal text usually)
+            t = t.encode('utf-8').decode('unicode_escape')
+        except Exception:
+            # fallback: replace common escaped sequences manually
+            t = t.replace('\\n', '\n').replace('\\t', ' ').replace('\\"', '"').replace("\\'", "'")
+
+        # Remove stray backslashes left-over
+        t = t.replace('\\', '')
+
+        # Remove characters the user asked not to include
+        for ch in ['`', '#']:
+            t = t.replace(ch, '')
+
+        # Normalize repeated blank lines to max two
+        t = re.sub(r'\n\s*\n+', '\n\n', t)
+
+        # Trim surrounding whitespace and quotes
+        t = t.strip().strip('"\'')
+
+        # Replace explicit model or vendor names (ChatGPT, OpenAI, GPT-4, etc.) with helpmespeak
         t = re.sub(r'\b(ChatGPT|Chat GPT|OpenAI|GPT-4o-mini|GPT-4|GPT4|GPT-3\.5|GPT-3|gpt-4o-mini)\b',
                    'helpmespeak', t, flags=re.IGNORECASE)
 
-        # Replace phrases like "my name is X", "I am X", "you can call me X" -> keep phrase but force name to helpmespeak
+        # Replace phrases like "my name is X", "I am X", "call me X" -> keep phrase but force name to helpmespeak
         def _name_replacer(m):
             prefix = m.group(1)
             return f"{prefix} helpmespeak"
-
-        t = re.sub(r'(?i)\b(my name is|i am|i\'m|call me|you can call me|you may call me|you can call me me)\b\s*[A-Za-z0-9_\-\'"]{0,60}',
+        t = re.sub(r'(?i)\b(my name is|i am|i\'m|call me|you can call me|you may call me)\b\s*[A-Za-z0-9_\-\'"]{0,60}',
                    _name_replacer, t)
 
         # Replace isolated occurrences of common assistant identifiers
@@ -138,28 +161,25 @@ class AITranslatorChatbot:
 
         # Collapse repeated occurrences of the replacement (avoid "helpmespeak helpmespeak")
         try:
-            # handle patterns like "helpmespeak helpmespeak", "helpmespeak, helpmespeak." etc.
             t = re.sub(r'(?i)\b(helpmespeak)(?:[\s,;:.!?-]+\1)+\b', r'\1', t)
         except Exception:
             pass
 
-        # Normalize multiple spaces introduced by replacements
-        t = re.sub(r'\s{2,}', ' ', t).strip()
-
         # If the model gave an explanatory sentence about a name like:
         #   "Khurram can refer to ..."  or  '"Khurram" can refer to ...'
-        # or a short explanation that just defines/mentions a name, return only the plain name.
+        # or a short definition, return only the plain name or a short cleaned token.
         try:
-            # match quoted or unquoted single-name followed by explanatory verbs/phrases
             m = re.match(r'^\s*[\'"]?([A-Z\u00C0-\u017F][\w\-\']{0,60})[\'"]?\s*(?:can\s+refer|can\s+also\s+refer|may\s+refer|is\s+a\s+name|can\s+mean|refers\s+to|is\s+used\s+to|is\s+commonly)\b', t, flags=re.IGNORECASE)
             if m:
                 return m.group(1).strip()
-            # If the response is very short (one word or one quoted token), return the cleaned token only
-            short_m = re.match(r'^\s*[\'"]?([^\'"\s][^\'"]{0,80})[\'"]?\s*[.?!]?\s*$', t)
-            if short_m and len(short_m.group(1).split()) <= 3:
+            short_m = re.match(r'^\s*[\'"]?([^\'"\s][^\'"]{0,200})[\'"]?\s*[.?!]?\s*$', t)
+            if short_m and len(short_m.group(1).split()) <= 6:
                 return short_m.group(1).strip().strip('.,!?')
         except Exception:
             pass
+
+        # Normalize multiple spaces introduced by replacements
+        t = re.sub(r'[ \t]{2,}', ' ', t).strip()
 
         return t
 
