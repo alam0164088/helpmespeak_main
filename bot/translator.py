@@ -125,11 +125,19 @@ class AITranslatorChatbot:
         t = text
 
         # Try to unescape JSON/unicode style escapes so "\n" becomes an actual newline, etc.
+        # Only attempt unicode_escape when the text actually contains escape sequences
         try:
-            # decode unicode escapes safely (won't raise for normal text usually)
-            t = t.encode('utf-8').decode('unicode_escape')
+            if re.search(r'\\u[0-9a-fA-F]{4}|\\x[0-9a-fA-F]{2}|\\n|\\t|\\r', t):
+                # decode escaped sequences like "\n", "\u09A6" safely
+                try:
+                    t = bytes(t, 'utf-8').decode('unicode_escape')
+                except Exception:
+                    # final safe fallbacks
+                    t = t.replace('\\n', '\n').replace('\\r', '\n').replace('\\t', ' ').replace('\\"', '"').replace("\\'", "'")
+            else:
+                # no escaped sequences — leave original unicode intact
+                t = t
         except Exception:
-            # fallback: replace common escaped sequences manually
             t = t.replace('\\n', '\n').replace('\\t', ' ').replace('\\"', '"').replace("\\'", "'")
 
         # Remove stray backslashes left-over
