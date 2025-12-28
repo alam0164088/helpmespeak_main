@@ -38,7 +38,20 @@ class ChatView(APIView):
                 if not explicit_marker:
                     # Treat as normal chat if no explicit target language/keyword present
                     reply = self.translator.get_normal_reply(user_input)
-                    return Response({"reply": reply}, status=status.HTTP_200_OK)
+                    # Build translation-style JSON where translated_text holds the chat reply.
+                    source_code = self.translator.detect_language(user_input) or 'auto'
+                    source_name = self.translator.supported_languages.get(source_code, 'Unknown') if source_code != 'auto' else 'Unknown'
+                    json_output = self.translator.create_json_output(
+                        original_text=user_input,
+                        translated_text=reply,
+                        source_language=source_name,
+                        target_language=None,
+                        source_code=source_code,
+                        target_code=None,
+                        success=True,
+                        error=None
+                    )
+                    return Response(json_output, status=status.HTTP_200_OK)
 
             # 🔹 Translation request
             if parsed_request.get('is_translation_request', False):
@@ -59,10 +72,22 @@ class ChatView(APIView):
                     return Response(response_serializer.validated_data, status=status.HTTP_200_OK)
                 return Response(response_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-            # 🔹 Normal chat
+            # 🔹 Normal chat (no translation intent)
             else:
                 reply = self.translator.get_normal_reply(user_input)
-                return Response({"reply": reply}, status=status.HTTP_200_OK)
+                source_code = self.translator.detect_language(user_input) or 'auto'
+                source_name = self.translator.supported_languages.get(source_code, 'Unknown') if source_code != 'auto' else 'Unknown'
+                json_output = self.translator.create_json_output(
+                    original_text=user_input,
+                    translated_text=reply,
+                    source_language=source_name,
+                    target_language=None,
+                    source_code=source_code,
+                    target_code=None,
+                    success=True,
+                    error=None
+                )
+                return Response(json_output, status=status.HTTP_200_OK)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 

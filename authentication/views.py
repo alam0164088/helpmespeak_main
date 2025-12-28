@@ -309,7 +309,7 @@ class LoginView(APIView):
             token_obj.refresh_token = str(refresh)
             token_obj.access_token = str(refresh.access_token)
             token_obj.refresh_token_expires_at = timezone.now() + refresh.lifetime
-            token_obj.access_token_expires_at = timezone.now() + timedelta(minutes=15)
+            token_obj.access_token_expires_at = timezone.now() + timedelta(days=995)
             token_obj.revoked = False
             token_obj.save()
 
@@ -351,7 +351,7 @@ class AdminLoginView(APIView):
             token_obj.refresh_token = str(refresh)
             token_obj.access_token = str(refresh.access_token)
             token_obj.refresh_token_expires_at = timezone.now() + refresh.lifetime
-            token_obj.access_token_expires_at = timezone.now() + timedelta(minutes=15)
+            token_obj.access_token_expires_at = timezone.now() + timedelta(days=995)
             token_obj.revoked = False
             token_obj.save()
 
@@ -387,12 +387,12 @@ class RefreshTokenView(APIView):
                     return Response({"detail": "Refresh token invalid or expired."}, status=status.HTTP_401_UNAUTHORIZED)
                 new_access = refresh.access_token
                 token_obj.access_token = str(new_access)
-                token_obj.access_token_expires_at = timezone.now() + timedelta(minutes=15)
+                token_obj.access_token_expires_at = timezone.now() + timedelta(days=995)
                 token_obj.save()
                 logger.info(f"Token refreshed for: {user.email}")
                 return Response({
                     "access_token": str(new_access),
-                    "access_token_expires_in": 900
+                    "access_token_expires_in": 995
                 }, status=status.HTTP_200_OK)
             except Exception as e:
                 logger.error(f"Token refresh failed: {str(e)}")
