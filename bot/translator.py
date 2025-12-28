@@ -146,6 +146,21 @@ class AITranslatorChatbot:
         # Normalize multiple spaces introduced by replacements
         t = re.sub(r'\s{2,}', ' ', t).strip()
 
+        # If the model gave an explanatory sentence about a name like:
+        #   "Khurram can refer to ..."  or  '"Khurram" can refer to ...'
+        # or a short explanation that just defines/mentions a name, return only the plain name.
+        try:
+            # match quoted or unquoted single-name followed by explanatory verbs/phrases
+            m = re.match(r'^\s*[\'"]?([A-Z\u00C0-\u017F][\w\-\']{0,60})[\'"]?\s*(?:can\s+refer|can\s+also\s+refer|may\s+refer|is\s+a\s+name|can\s+mean|refers\s+to|is\s+used\s+to|is\s+commonly)\b', t, flags=re.IGNORECASE)
+            if m:
+                return m.group(1).strip()
+            # If the response is very short (one word or one quoted token), return the cleaned token only
+            short_m = re.match(r'^\s*[\'"]?([^\'"\s][^\'"]{0,80})[\'"]?\s*[.?!]?\s*$', t)
+            if short_m and len(short_m.group(1).split()) <= 3:
+                return short_m.group(1).strip().strip('.,!?')
+        except Exception:
+            pass
+
         return t
 
     def smart_text_extraction(self, user_input: str, target_language: str) -> str:
