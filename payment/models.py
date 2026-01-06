@@ -1,6 +1,10 @@
 from django.db import models
 from django.conf import settings
-from django.utils.timezone import now, timedelta
+from django.utils.timezone import now
+from datetime import timedelta
+
+# Use short free trial: 5 minutes (for testing/demo). No DB migration needed.
+TRIAL_PERIOD_MINUTES = 5
 
 # ---------------------------
 # Plan Model
@@ -89,6 +93,15 @@ class Subscription(models.Model):
         Returns True যদি subscription paid এবং active হয়
         """
         return self.status == 'active' and self.plan and self.plan.price > 0
+
+    # ---------------------------
+    # Start Trial Subscription
+    # ---------------------------
+    def start_trial(self):
+        # short trial for new accounts: 5 minutes from now
+        self.status = 'trial'
+        self.renewal_date = now() + timedelta(minutes=TRIAL_PERIOD_MINUTES)
+        self.save()
 
     def __str__(self):
         return f"{self.user.email} - {self.plan.name if self.plan else 'No Plan'} ({self.status})"
