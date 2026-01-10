@@ -210,18 +210,53 @@ class SendOTPView(APIView):
             code = None
             if purpose == 'email_verification' and not user.is_email_verified:
                 code = user.generate_email_verification_code()
+                subject = "Verify Your Email Address"
+                message = f"""
+                Hi {user.first_name or 'User'},
+
+                Thank you for signing up! Please use the following OTP to verify your email address:
+                OTP: {code}
+
+                This OTP will expire in 5 minutes. If you did not request this, please ignore this email.
+
+                Best regards,
+                HelpMeSpeak Team
+                """
             elif purpose == 'password_reset':
                 code = user.generate_password_reset_code()
+                subject = "Reset Your Password"
+                message = f"""
+                Hi {user.first_name or 'User'},
+
+                We received a request to reset your password. Please use the following OTP to reset your password:
+                OTP: {code}
+
+                This OTP will expire in 15 minutes. If you did not request this, please ignore this email.
+
+                Best regards,
+                HelpMeSpeak Team
+                """
             elif purpose == 'two_factor' and user.is_2fa_enabled:
                 code = user.generate_email_verification_code()
+                subject = "Two-Factor Authentication (2FA) OTP"
+                message = f"""
+                Hi {user.first_name or 'User'},
+
+                Your 2FA OTP is: {code}
+
+                This OTP will expire in 5 minutes. If you did not request this, please ignore this email.
+
+                Best regards,
+                HelpMeSpeak Team
+                """
             else:
                 logger.warning(f"Invalid OTP purpose: {purpose} for user: {email}")
                 return Response({"detail": f"Invalid request for {purpose}."}, status=status.HTTP_400_BAD_REQUEST)
             
             if code:
                 send_mail(
-                    f'{purpose.replace("_", " ").title()} OTP',
-                    f'Your OTP is {code}. Expires in {"5 minutes" if purpose != "password_reset" else "15 minutes"}.',
+                    subject,
+                    message,
                     settings.DEFAULT_FROM_EMAIL,
                     [user.email],
                     fail_silently=False,
@@ -251,7 +286,7 @@ class VerifyOTPView(APIView):
                 user.email_verification_code_expires_at = None
                 user.save()
                 logger.info(f"Email verified for: {user.email}")
-                return Response({"message": "Email verified successfully."}, status=status.HTTP_200_OK)
+                return Response({"message": "Your email has been successfully verified. Thank you!"}, status=status.HTTP_200_OK)
 
             elif user.password_reset_code == otp and user.password_reset_code_expires_at >= timezone.now():
                 reset_token = str(uuid4())
@@ -261,12 +296,12 @@ class VerifyOTPView(APIView):
                 user.save()
                 logger.info(f"Password reset OTP verified for: {user.email}")
                 return Response({
-                    "message": "OTP verified. You may now reset your password.",
+                    "message": "OTP verified successfully. You may now reset your password.",
                     "reset_token": reset_token
                 }, status=status.HTTP_200_OK)
 
             else:
-                return Response({"detail": "OTP expired or invalid."}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({"detail": "The OTP you entered is invalid or has expired."}, status=status.HTTP_400_BAD_REQUEST)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
 
