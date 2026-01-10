@@ -3,7 +3,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
-from django.core.mail import send_mail
+from django.core.mail import send_mail, EmailMultiAlternatives
 from django.conf import settings
 from django.utils import timezone
 from django.contrib.auth import get_user_model
@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from uuid import uuid4
 import requests
 from django.core.files.base import ContentFile
+from django.template.loader import render_to_string
 
 from .models import Token, Profile, PasswordResetSession
 from .permissions import IsAdmin
@@ -43,13 +44,182 @@ class RegisterView(APIView):
             send_verification = request.data.get('send_verification_otp', True)
             if send_verification:
                 code = user.generate_email_verification_code()
-                send_mail(
-                    'Verify Your Email',
-                    f'Your OTP is {code}. Expires in 5 minutes.',
-                    settings.DEFAULT_FROM_EMAIL,
-                    [user.email],
-                    fail_silently=False,
+                
+                # Beautiful HTML email for registration
+                html_content = f"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <style>
+                        * {{
+                            margin: 0;
+                            padding: 0;
+                            box-sizing: border-box;
+                        }}
+                        body {{
+                            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                            line-height: 1.6;
+                            color: #333;
+                            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                            padding: 20px;
+                        }}
+                        .container {{
+                            max-width: 600px;
+                            margin: 0 auto;
+                            background-color: #ffffff;
+                            border-radius: 12px;
+                            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+                            overflow: hidden;
+                        }}
+                        .header {{
+                            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                            padding: 30px 20px;
+                            text-align: center;
+                            color: #ffffff;
+                        }}
+                        .header h2 {{
+                            font-size: 28px;
+                            font-weight: 700;
+                            margin: 0;
+                            letter-spacing: 1px;
+                        }}
+                        .header p {{
+                            font-size: 14px;
+                            margin-top: 5px;
+                            opacity: 0.9;
+                        }}
+                        .content {{
+                            padding: 40px 30px;
+                        }}
+                        .content p {{
+                            margin: 15px 0;
+                            color: #555;
+                            font-size: 15px;
+                        }}
+                        .otp-box {{
+                            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                            border-radius: 10px;
+                            padding: 25px;
+                            text-align: center;
+                            margin: 30px 0;
+                            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.3);
+                        }}
+                        .otp {{
+                            font-size: 48px;
+                            font-weight: 900;
+                            color: #ffffff;
+                            letter-spacing: 8px;
+                            font-family: 'Courier New', monospace;
+                        }}
+                        .otp-label {{
+                            color: rgba(255, 255, 255, 0.8);
+                            font-size: 12px;
+                            text-transform: uppercase;
+                            margin-top: 10px;
+                            letter-spacing: 2px;
+                        }}
+                        .info-box {{
+                            background-color: #f8f9ff;
+                            border-left: 4px solid #667eea;
+                            padding: 15px;
+                            margin: 20px 0;
+                            border-radius: 5px;
+                        }}
+                        .info-box p {{
+                            margin: 5px 0;
+                            font-size: 14px;
+                            color: #666;
+                        }}
+                        .footer {{
+                            background-color: #f8f9ff;
+                            padding: 25px;
+                            text-align: center;
+                            border-top: 1px solid #eee;
+                        }}
+                        .footer p {{
+                            margin: 8px 0;
+                            font-size: 12px;
+                            color: #999;
+                        }}
+                        .footer a {{
+                            color: #667eea;
+                            text-decoration: none;
+                            font-weight: 600;
+                        }}
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <div class="header">
+                            <h2>🎉 Welcome to HelpMeSpeak</h2>
+                            <p>Verify Your Email Address</p>
+                        </div>
+                        
+                        <div class="content">
+                            <p>Hi <strong>{user.first_name or 'User'}</strong>,</p>
+                            
+                            <p>Welcome to HelpMeSpeak! We're thrilled to have you join our community.</p>
+                            
+                            <p>To complete your registration, please verify your email using the code below:</p>
+                            
+                            <div class="otp-box">
+                                <div class="otp">{code}</div>
+                                <div class="otp-label">One-Time Password</div>
+                            </div>
+                            
+                            <div class="info-box">
+                                <p><strong>⏱️ Valid for:</strong> 5 minutes</p>
+                                <p><strong>🔒 Security:</strong> This code is personal & confidential</p>
+                                <p><strong>✅ Status:</strong> Active</p>
+                            </div>
+                            
+                            <p style="color: #e74c3c; font-weight: 600; margin-top: 20px;">⚠️ If you didn't create this account, please ignore this email.</p>
+                            
+                            <p style="margin-top: 20px;">Best regards,<br><strong>The HelpMeSpeak Team</strong></p>
+                        </div>
+                        
+                        <div class="footer">
+                            <p>&copy; {datetime.now().year} HelpMeSpeak. All rights reserved.</p>
+                            <p><a href="https://helpmespeak.app">Visit our website</a> | <a href="https://helpmespeak.app/support">Get Support</a></p>
+                            <p style="margin-top: 15px; font-size: 11px; color: #bbb;">This is an automated message, please do not reply to this email.</p>
+                        </div>
+                    </div>
+                </body>
+                </html>
+                """
+
+                text_content = f"""
+                HelpMeSpeak - Email Verification
+                =================================
+                
+                Hi {user.first_name or 'User'},
+                
+                Welcome to HelpMeSpeak!
+                
+                Your Verification Code:
+                {code}
+                
+                Valid for: 5 minutes
+                
+                If you didn't create this account, please ignore this email.
+                
+                Best regards,
+                The HelpMeSpeak Team
+                
+                © {datetime.now().year} HelpMeSpeak. All rights reserved.
+                """
+
+                email_message = EmailMultiAlternatives(
+                    subject='Verify Your Email - HelpMeSpeak',
+                    body=text_content,
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    to=[user.email],
                 )
+                email_message.attach_alternative(html_content, "text/html")
+                email_message.send()
+                
                 user.is_active = False
                 user.save()
                 logger.info(f"User registered: {user.email} (verification pending)")
@@ -208,61 +378,230 @@ class SendOTPView(APIView):
                 return Response({"detail": "If the email exists, an OTP has been sent."}, status=status.HTTP_200_OK)
             
             code = None
+            subject = None
+            expiry = None
             if purpose == 'email_verification' and not user.is_email_verified:
                 code = user.generate_email_verification_code()
                 subject = "Verify Your Email Address"
-                message = f"""
-                Hi {user.first_name or 'User'},
-
-                Thank you for signing up! Please use the following OTP to verify your email address:
-                OTP: {code}
-
-                This OTP will expire in 5 minutes. If you did not request this, please ignore this email.
-
-                Best regards,
-                HelpMeSpeak Team
-                """
+                expiry = "5 minutes"
             elif purpose == 'password_reset':
                 code = user.generate_password_reset_code()
                 subject = "Reset Your Password"
-                message = f"""
-                Hi {user.first_name or 'User'},
-
-                We received a request to reset your password. Please use the following OTP to reset your password:
-                OTP: {code}
-
-                This OTP will expire in 15 minutes. If you did not request this, please ignore this email.
-
-                Best regards,
-                HelpMeSpeak Team
-                """
+                expiry = "15 minutes"
             elif purpose == 'two_factor' and user.is_2fa_enabled:
                 code = user.generate_email_verification_code()
                 subject = "Two-Factor Authentication (2FA) OTP"
-                message = f"""
-                Hi {user.first_name or 'User'},
-
-                Your 2FA OTP is: {code}
-
-                This OTP will expire in 5 minutes. If you did not request this, please ignore this email.
-
-                Best regards,
-                HelpMeSpeak Team
-                """
+                expiry = "5 minutes"
             else:
                 logger.warning(f"Invalid OTP purpose: {purpose} for user: {email}")
                 return Response({"detail": f"Invalid request for {purpose}."}, status=status.HTTP_400_BAD_REQUEST)
             
             if code:
-                send_mail(
-                    subject,
-                    message,
-                    settings.DEFAULT_FROM_EMAIL,
-                    [user.email],
-                    fail_silently=False,
+                # Inline HTML content with beautiful design
+                html_content = f"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <style>
+                        * {{
+                            margin: 0;
+                            padding: 0;
+                            box-sizing: border-box;
+                        }}
+                        body {{
+                            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                            line-height: 1.6;
+                            color: #333;
+                            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                            padding: 20px;
+                        }}
+                        .container {{
+                            max-width: 600px;
+                            margin: 0 auto;
+                            background-color: #ffffff;
+                            border-radius: 12px;
+                            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+                            overflow: hidden;
+                        }}
+                        .header {{
+                            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                            padding: 30px 20px;
+                            text-align: center;
+                            color: #ffffff;
+                        }}
+                        .header h2 {{
+                            font-size: 28px;
+                            font-weight: 700;
+                            margin: 0;
+                            letter-spacing: 1px;
+                        }}
+                        .header p {{
+                            font-size: 14px;
+                            margin-top: 5px;
+                            opacity: 0.9;
+                        }}
+                        .content {{
+                            padding: 40px 30px;
+                        }}
+                        .content h3 {{
+                            color: #667eea;
+                            font-size: 20px;
+                            margin-bottom: 15px;
+                        }}
+                        .content p {{
+                            margin: 15px 0;
+                            color: #555;
+                            font-size: 15px;
+                        }}
+                        .otp-box {{
+                            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                            border-radius: 10px;
+                            padding: 25px;
+                            text-align: center;
+                            margin: 30px 0;
+                            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.3);
+                        }}
+                        .otp {{
+                            font-size: 48px;
+                            font-weight: 900;
+                            color: #ffffff;
+                            letter-spacing: 8px;
+                            font-family: 'Courier New', monospace;
+                        }}
+                        .otp-label {{
+                            color: rgba(255, 255, 255, 0.8);
+                            font-size: 12px;
+                            text-transform: uppercase;
+                            margin-top: 10px;
+                            letter-spacing: 2px;
+                        }}
+                        .info-box {{
+                            background-color: #f8f9ff;
+                            border-left: 4px solid #667eea;
+                            padding: 15px;
+                            margin: 20px 0;
+                            border-radius: 5px;
+                        }}
+                        .info-box p {{
+                            margin: 5px 0;
+                            font-size: 14px;
+                            color: #666;
+                        }}
+                        .warning {{
+                            color: #e74c3c;
+                            font-weight: 600;
+                        }}
+                        .footer {{
+                            background-color: #f8f9ff;
+                            padding: 25px;
+                            text-align: center;
+                            border-top: 1px solid #eee;
+                        }}
+                        .footer p {{
+                            margin: 8px 0;
+                            font-size: 12px;
+                            color: #999;
+                        }}
+                        .footer a {{
+                            color: #667eea;
+                            text-decoration: none;
+                            font-weight: 600;
+                        }}
+                        .footer a:hover {{
+                            text-decoration: underline;
+                        }}
+                        .divider {{
+                            height: 2px;
+                            background: linear-gradient(to right, #667eea, #764ba2);
+                            margin: 20px 0;
+                        }}
+                        .security-icon {{
+                            text-align: center;
+                            font-size: 40px;
+                            margin: 15px 0;
+                        }}
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <div class="header">
+                            <h2>🎉 HelpMeSpeak</h2>
+                            <p>Secure Verification Code</p>
+                        </div>
+                        
+                        <div class="content">
+                            <p>Hi <strong>{user.first_name or 'User'}</strong>,</p>
+                            
+                            <p>Thank you for using HelpMeSpeak! We're excited to have you on board.</p>
+                            
+                            <h3>Your Verification Code</h3>
+                            <p>Use the code below to {purpose.replace('_', ' ').lower()}:</p>
+                            
+                            <div class="otp-box">
+                                <div class="otp">{code}</div>
+                                <div class="otp-label">One-Time Password</div>
+                            </div>
+                            
+                            <div class="info-box">
+                                <p><strong>⏱️ Valid for:</strong> {expiry}</p>
+                                <p><strong>🔒 This code is:</strong> Personal & Confidential</p>
+                                <p><strong>✅ Status:</strong> Active</p>
+                            </div>
+                            
+                            <div class="divider"></div>
+                            
+                            <p style="color: #e74c3c; font-weight: 600;">⚠️ Important Security Notice</p>
+                            <p>If you did not request this code, please <strong>ignore this email immediately</strong> and secure your account.</p>
+                            
+                            <p style="margin-top: 20px;">Best regards,<br><strong>The HelpMeSpeak Team</strong></p>
+                        </div>
+                        
+                        <div class="footer">
+                            <p>&copy; {datetime.now().year} HelpMeSpeak. All rights reserved.</p>
+                            <p><a href="https://helpmespeak.app">Visit our website</a> | <a href="https://helpmespeak.app/support">Get Support</a></p>
+                            <p style="margin-top: 15px; font-size: 11px; color: #bbb;">This is an automated message, please do not reply to this email.</p>
+                        </div>
+                    </div>
+                </body>
+                </html>
+                """
+
+                # Plain text content
+                text_content = f"""
+                HelpMeSpeak - Secure Verification Code
+                ========================================
+                
+                Hi {user.first_name or 'User'},
+                
+                Thank you for using HelpMeSpeak!
+                
+                Your Verification Code:
+                {code}
+                
+                Valid for: {expiry}
+                
+                ⚠️ IMPORTANT: If you did not request this code, please ignore this email immediately.
+                
+                Best regards,
+                The HelpMeSpeak Team
+                
+                © {datetime.now().year} HelpMeSpeak. All rights reserved.
+                """
+
+                # Send email
+                email_message = EmailMultiAlternatives(
+                    subject=subject,
+                    body=text_content,
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    to=[user.email],
                 )
+                email_message.attach_alternative(html_content, "text/html")
+                email_message.send()
+
                 logger.info(f"OTP {code} sent for {purpose} to: {user.email}")
-                return Response({"message": f"OTP sent to email. Expires in {'5 minutes' if purpose != 'password_reset' else '15 minutes'}."}, status=status.HTTP_200_OK)
+                return Response({"message": f"OTP sent to email. Expires in {expiry}."}, status=status.HTTP_200_OK)
             
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -585,14 +924,209 @@ class ResendOTPView(APIView):
                 return Response({"detail": "If the email exists, an OTP has been sent."}, status=status.HTTP_200_OK)
             if user.is_email_verified:
                 return Response({"detail": "Email already verified."}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Generate OTP
             code = user.generate_email_verification_code()
-            send_mail(
-                'Resend Verification OTP',
-                f'Your new OTP is {code}. Expires in 5 minutes.',
-                settings.DEFAULT_FROM_EMAIL,
-                [user.email],
-                fail_silently=False,
+            subject = "Resend Verification OTP"
+            expiry = "5 minutes"
+
+            # Inline HTML content with beautiful design
+            html_content = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <style>
+                    * {{
+                        margin: 0;
+                        padding: 0;
+                        box-sizing: border-box;
+                    }}
+                    body {{
+                        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                        line-height: 1.6;
+                        color: #333;
+                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        padding: 20px;
+                    }}
+                    .container {{
+                        max-width: 600px;
+                        margin: 0 auto;
+                        background-color: #ffffff;
+                        border-radius: 12px;
+                        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+                        overflow: hidden;
+                    }}
+                    .header {{
+                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        padding: 30px 20px;
+                        text-align: center;
+                        color: #ffffff;
+                    }}
+                    .header h2 {{
+                        font-size: 28px;
+                        font-weight: 700;
+                        margin: 0;
+                        letter-spacing: 1px;
+                    }}
+                    .header p {{
+                        font-size: 14px;
+                        margin-top: 5px;
+                        opacity: 0.9;
+                    }}
+                    .content {{
+                        padding: 40px 30px;
+                    }}
+                    .content h3 {{
+                        color: #667eea;
+                        font-size: 20px;
+                        margin-bottom: 15px;
+                    }}
+                    .content p {{
+                        margin: 15px 0;
+                        color: #555;
+                        font-size: 15px;
+                    }}
+                    .otp-box {{
+                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        border-radius: 10px;
+                        padding: 25px;
+                        text-align: center;
+                        margin: 30px 0;
+                        box-shadow: 0 5px 20px rgba(102, 126, 234, 0.3);
+                    }}
+                    .otp {{
+                        font-size: 48px;
+                        font-weight: 900;
+                        color: #ffffff;
+                        letter-spacing: 8px;
+                        font-family: 'Courier New', monospace;
+                    }}
+                    .otp-label {{
+                        color: rgba(255, 255, 255, 0.8);
+                        font-size: 12px;
+                        text-transform: uppercase;
+                        margin-top: 10px;
+                        letter-spacing: 2px;
+                    }}
+                    .info-box {{
+                        background-color: #f8f9ff;
+                        border-left: 4px solid #667eea;
+                        padding: 15px;
+                        margin: 20px 0;
+                        border-radius: 5px;
+                    }}
+                    .info-box p {{
+                        margin: 5px 0;
+                        font-size: 14px;
+                        color: #666;
+                    }}
+                    .warning {{
+                        color: #e74c3c;
+                        font-weight: 600;
+                    }}
+                    .footer {{
+                        background-color: #f8f9ff;
+                        padding: 25px;
+                        text-align: center;
+                        border-top: 1px solid #eee;
+                    }}
+                    .footer p {{
+                        margin: 8px 0;
+                        font-size: 12px;
+                        color: #999;
+                    }}
+                    .footer a {{
+                        color: #667eea;
+                        text-decoration: none;
+                        font-weight: 600;
+                    }}
+                    .footer a:hover {{
+                        text-decoration: underline;
+                    }}
+                    .divider {{
+                        height: 2px;
+                        background: linear-gradient(to right, #667eea, #764ba2);
+                        margin: 20px 0;
+                    }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="header">
+                        <h2>🎉 HelpMeSpeak</h2>
+                        <p>New Verification Code</p>
+                    </div>
+                    
+                    <div class="content">
+                        <p>Hi <strong>{user.first_name or 'User'}</strong>,</p>
+                        
+                        <p>Here's your new verification code to complete your registration.</p>
+                        
+                        <h3>Your New OTP</h3>
+                        
+                        <div class="otp-box">
+                            <div class="otp">{code}</div>
+                            <div class="otp-label">One-Time Password</div>
+                        </div>
+                        
+                        <div class="info-box">
+                            <p><strong>⏱️ Valid for:</strong> {expiry}</p>
+                            <p><strong>🔒 Type:</strong> Email Verification</p>
+                            <p><strong>✅ Status:</strong> Active & Ready to Use</p>
+                        </div>
+                        
+                        <div class="divider"></div>
+                        
+                        <p><strong style="color: #27ae60;">💡 What to do next:</strong></p>
+                        <p>Enter this code in the verification field to activate your account.</p>
+                        
+                        <p style="color: #e74c3c; font-weight: 600; margin-top: 20px;">⚠️ If you didn't request this, please ignore this email.</p>
+                        
+                        <p style="margin-top: 20px;">Best regards,<br><strong>The HelpMeSpeak Team</strong></p>
+                    </div>
+                    
+                    <div class="footer">
+                        <p>&copy; {datetime.now().year} HelpMeSpeak. All rights reserved.</p>
+                        <p><a href="https://helpmespeak.app">Visit our website</a> | <a href="https://helpmespeak.app/support">Get Support</a></p>
+                        <p style="margin-top: 15px; font-size: 11px; color: #bbb;">This is an automated message, please do not reply to this email.</p>
+                    </div>
+                </div>
+            </body>
+            </html>
+            """
+
+            # Plain text content
+            text_content = f"""
+            HelpMeSpeak - New Verification Code
+            =====================================
+            
+            Hi {user.first_name or 'User'},
+            
+            Here's your new verification code:
+            {code}
+            
+            Valid for: {expiry}
+            
+            ⚠️ If you didn't request this, please ignore this email.
+            
+            Best regards,
+            The HelpMeSpeak Team
+            
+            © {datetime.now().year} HelpMeSpeak. All rights reserved.
+            """
+
+            # Send email
+            email_message = EmailMultiAlternatives(
+                subject=subject,
+                body=text_content,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                to=[user.email],
             )
+            email_message.attach_alternative(html_content, "text/html")
+            email_message.send()
+
             logger.info(f"OTP resent for: {user.email}")
             return Response({"message": "Verification OTP resent. Expires in 5 minutes."}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
