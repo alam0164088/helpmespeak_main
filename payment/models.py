@@ -4,7 +4,7 @@ from django.utils.timezone import now
 from datetime import timedelta
 
 # Use short free trial: 5 minutes (for testing/demo). No DB migration needed.
-TRIAL_PERIOD_MINUTES = 5
+TRIAL_PERIOD_DAYS = 7
 
 # ---------------------------
 # Plan Model
@@ -97,9 +97,9 @@ class Subscription(models.Model):
     # Start Trial Subscription
     # ---------------------------
     def start_trial(self):
-        # short trial for new accounts: 5 minutes from now
+        # start trial for new accounts: 7 days from now
         self.status = 'trial'
-        self.renewal_date = now() + timedelta(minutes=TRIAL_PERIOD_MINUTES)
+        self.renewal_date = now() + timedelta(days=TRIAL_PERIOD_DAYS)
         self.save()
 
     def __str__(self):
