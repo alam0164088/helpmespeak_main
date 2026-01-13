@@ -60,13 +60,12 @@ class Subscription(models.Model):
         """
         if plan:
             self.plan = plan
-
-        if self.plan:
-            self.status = 'active' if self.plan.price > 0 else 'trial'
-            self.start_date = now()
-            self.renewal_date = now() + timedelta(days=self.plan.duration_days)
+            # set trial / first billing period to 7 days
+            self.renewal_date = now() + timedelta(days=7)
+            self.status = 'trial'  # or 'active' depending on your logic
+            self.is_active = True
             self.save()
-    
+
     # ---------------------------
     # Check if active & valid
     # ---------------------------
