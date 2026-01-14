@@ -55,15 +55,45 @@ class Subscription(models.Model):
     # ---------------------------
     def activate(self, plan=None):
         """
-        Subscription activate করবে। 
-        যদি plan দেওয়া হয়, সেটি assign করবে।
+        Activate subscription.
+        - If plan has price > 0 => set active and set renewal_date based on plan.duration_days or interval.
+        - If free/trial plan => set trial for TRIAL_PERIOD_DAYS.
         """
         if plan:
             self.plan = plan
-            # set trial / first billing period to 7 days
-            self.renewal_date = now() + timedelta(days=7)
-            self.status = 'trial'  # or 'active' depending on your logic
-            self.is_active = True
+
+            # determine duration in days
+            duration_days = None
+            if getattr(plan, "duration_days", None) and plan.duration_days > 0:
+                duration_days = plan.duration_days
+            else:
+                # fallback mapping from interval
+                interval = (plan.interval or "").lower()
+                if interval in ['year', 'annual', 'yr']:
+                    duration_days = 365
+                elif interval in ['month', 'monthly', 'mo']:
+                    duration_days = 30
+                elif interval in ['week', 'weekly']:
+                    duration_days = 7
+                else:
+                    # default fallback
+                    duration_days = TRIAL_PERIOD_DAYS
+
+            if getattr(plan, "price", 0) and float(plan.price) > 0:
+                # Paid plan -> active
+                self.status = 'active'
+                self.renewal_date = now() + timedelta(days=duration_days)
+            else:
+                # Free/trial plan -> trial period
+                self.status = 'trial'
+                self.renewal_date = now() + timedelta(days=TRIAL_PERIOD_DAYS)
+
+            # mark active flag if you use it
+            try:
+                self.is_active = True
+            except Exception:
+                pass
+
             self.save()
 
     # ---------------------------
