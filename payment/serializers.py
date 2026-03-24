@@ -7,7 +7,8 @@ class PlanSerializer(serializers.ModelSerializer):
     """প্ল্যান লিস্ট API এর জন্য ব্যবহৃত হবে।"""
     class Meta:
         model = Plan
-        fields = ['id', 'name', 'price', 'currency', 'interval', 'apple_product_id', 'google_product_id']
+        # is_active ফিল্ডটি এখানে যুক্ত করা হলো
+        fields = ['id', 'name', 'price', 'currency', 'interval', 'is_active', 'apple_product_id', 'google_product_id']
 
 class SubscriptionStatusSerializer(serializers.ModelSerializer):
     """সাবস্ক্রিপশন স্ট্যাটাস API এর জন্য ব্যবহৃত হবে।"""
