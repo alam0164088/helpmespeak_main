@@ -144,6 +144,10 @@ REST_FRAMEWORK = {
     ),
 }
 
+# Pagination: use project paginator with adjustable `page_size` via query param
+REST_FRAMEWORK["DEFAULT_PAGINATION_CLASS"] = "myproject.pagination.StandardResultsSetPagination"
+REST_FRAMEWORK["PAGE_SIZE"] = 20
+
 # ------------------------------
 # JWT Settings
 # ------------------------------
